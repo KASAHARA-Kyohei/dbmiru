@@ -1,0 +1,106 @@
+# Milestones — DbMiru
+
+This file is the source of truth for progress.
+Mark items as done by changing `[ ]` to `[x]` and committing to git.
+
+---
+
+## M0: Project bootstrap
+
+### Goals
+
+Create a “keepable” foundation: app starts, docs exist, basic quality gates.
+
+### Checklist
+
+- [x] Repo initialized with Rust project (`cargo new dbmiru`)
+- [x] `AGENTS.md` and `docs/` created and committed
+- [x] App window opens (gpui) with placeholder layout panels
+- [x] Logging enabled (tracing)
+- [x] Config directory decided and documented
+- [x] Basic `cargo fmt` and `cargo clippy` clean _(clippy blocked: Metal toolchain missing)_
+
+### DoD (Definition of Done)
+
+- App starts and shows a window reliably
+- No panic in normal startup
+- Docs reflect actual behavior
+
+---
+
+## M1: Connection profiles + SQL execution (PostgreSQL)
+
+### Goals
+
+Run queries against PostgreSQL and view results.
+
+### Checklist
+
+- [x] Connection profile list in sidebar
+- [x] Create/Edit/Delete connection profiles
+- [x] Connect to PostgreSQL and show status (connected/disconnected)
+- [x] SQL editor (single tab is fine)
+- [x] Execute SQL (Cmd/Ctrl+Enter)
+- [x] Display results (table view) with row limit (e.g., 1000)
+- [x] Display errors (summary + details)
+
+### DoD
+
+- A user can connect to a local PostgreSQL instance and run `SELECT 1`
+- Query errors are visible and do not crash the app
+
+### Manual smoke checklist
+
+- [x] アプリ起動時に接続プロフィール一覧がサイドバーへ表示される
+- [x] 新規プロフィール作成 → 保存 → 一覧へ即反映 → 編集/削除が反映される
+- [x] プロフィール選択後に Connect/Disconnect が UI 上の状態ラベルへ即反映される
+- [x] SQL エディタへ `SELECT 1` を入力して Cmd+Enter 実行 → 結果テーブルへ最大 1000 行で表示される
+- [x] 無効な SQL を実行するとエラーサマリ/詳細が下部パネルへ表示され UI が落ちない
+- [x] すべてのテキストフィールドで Backspace/Delete と矢印キーを使った基本的な編集/削除操作が動作する
+
+---
+
+## M2: Schema exploration + workspace evaluation
+
+### Goals
+
+Let users browse basic metadata and preview tables.
+
+### Checklist
+
+- [ ] List schemas
+- [ ] List tables
+- [ ] List columns for selected table
+- [ ] Table preview: `SELECT * FROM <table> LIMIT N`
+- [ ] Improve result table UX (copy cell/row basics if feasible)
+- [ ] Decide workspace split boundaries (app / core / db / storage) and document in `docs/architecture.md`
+- [ ] Design and implement secure password storage (OS keychain or master password)
+
+### Workspace evaluation criteria (write decision in docs)
+
+Convert to workspace if at least one is true:
+
+- UI code and DB code are frequently edited together and feel tangled
+- You want to add a second DB backend soon (even experimental)
+- You want to unit test core logic without UI dependencies
+
+---
+
+## M3: DB abstraction + Cargo workspace
+
+### Goals
+
+Prepare for multiple databases by introducing an adapter layer and splitting crates.
+
+### Checklist
+
+- [ ] Define a `DbAdapter` trait (connect/execute/metadata)
+- [ ] Implement `PostgresAdapter`
+- [ ] Convert repo to Cargo workspace
+- [ ] Split crates: `app`, `core`, `db`, `storage`
+- [ ] Update docs to match new structure
+
+### DoD
+
+- Same app features still work after refactor
+- Core logic is testable without gpui
