@@ -1,14 +1,14 @@
-# 現在のマイルストーン
+# Current milestone
 
 M2
 
-## 次にやること
+## Next actions
 
-- pgAdmin 的なメタデータブラウズ体験を洗い出し、schemas/tables/columns/preview の UI 仕様を固める
-- `db` モジュールへメタデータ取得 API を追加し、UI から非同期で呼び出せるようにする
-- Secure password storage (OS keychain or master password) の方式を調査し、M2 実装方針を決定する
+- Map out the pgAdmin-like metadata browsing experience and lock the UI spec for schemas/tables/columns/preview
+- Add metadata-fetch APIs to the `db` module and call them asynchronously from the UI
+- Research secure password storage options (OS keychain or master password) and decide the M2 implementation approach
 
-## メモ
+## Notes
 
-- M1 DoD は達成済み（接続/SQL 実行/結果・エラー表示）
-- M2 ではメタデータブラウザと安全な資格情報管理を軸にタスク分解を進める
+- M1 DoD is already met (connect / run SQL / show results and errors)
+- In M2 we focus on metadata browsing and secure credential management when breaking down tasks

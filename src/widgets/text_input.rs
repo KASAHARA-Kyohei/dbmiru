@@ -502,6 +502,7 @@ impl Render for TextInput {
                     .h(px(36.))
                     .w_full()
                     .px_3()
+                    .rounded_lg()
                     .items_center()
                     .bg(rgb(0x0b1120))
                     .border_1()
@@ -520,6 +521,29 @@ impl IntoElement for TextElement {
 
     fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+impl TextElement {
+    fn text_bounds(bounds: Bounds<Pixels>, line_height: Pixels) -> (Bounds<Pixels>, Pixels) {
+        let available_height = bounds.bottom() - bounds.top();
+        let text_height = if available_height < line_height {
+            available_height
+        } else {
+            line_height
+        };
+        let offset = (available_height - text_height) * 0.5;
+        let text_top = bounds.top() + offset;
+
+        let left = bounds.left();
+        let right = bounds.right();
+        (
+            Bounds::from_corners(
+                Point::new(left, text_top),
+                Point::new(right, text_top + text_height),
+            ),
+            text_height,
+        )
     }
 }
 
@@ -550,7 +574,7 @@ impl Element for TextElement {
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.size.width = gpui::relative(1.).into();
-        style.size.height = window.line_height().into();
+        style.size.height = gpui::relative(1.).into();
         (window.request_layout(style, [], cx), ())
     }
 
@@ -569,6 +593,8 @@ impl Element for TextElement {
         let mut selected_range = input.selected_range.clone();
         let mut cursor = input.cursor_offset();
         let mut marked_range = input.marked_range.clone();
+        let line_height = window.line_height();
+        let (text_bounds, text_height) = Self::text_bounds(bounds, line_height);
 
         if input.obscure && !display_text.is_empty() {
             let char_count = input.content.chars().count();
@@ -638,8 +664,8 @@ impl Element for TextElement {
                 None,
                 Some(fill(
                     Bounds::new(
-                        Point::new(bounds.left() + cursor_pos, bounds.top()),
-                        gpui::size(px(2.), bounds.bottom() - bounds.top()),
+                        Point::new(text_bounds.left() + cursor_pos, text_bounds.top()),
+                        gpui::size(px(2.), text_height),
                     ),
                     gpui::blue(),
                 )),
@@ -649,12 +675,12 @@ impl Element for TextElement {
                 Some(fill(
                     Bounds::from_corners(
                         Point::new(
-                            bounds.left() + line.x_for_index(selected_range.start),
-                            bounds.top(),
+                            text_bounds.left() + line.x_for_index(selected_range.start),
+                            text_bounds.top(),
                         ),
                         Point::new(
-                            bounds.left() + line.x_for_index(selected_range.end),
-                            bounds.bottom(),
+                            text_bounds.left() + line.x_for_index(selected_range.end),
+                            text_bounds.bottom(),
                         ),
                     ),
                     rgba(0x3311ff30),
@@ -690,7 +716,9 @@ impl Element for TextElement {
             window.paint_quad(selection)
         }
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), window, cx)
+        let line_height = window.line_height();
+        let (text_bounds, text_height) = Self::text_bounds(bounds, line_height);
+        line.paint(text_bounds.origin, text_height, window, cx)
             .unwrap();
 
         if focus_handle.is_focused(window)
@@ -701,7 +729,7 @@ impl Element for TextElement {
 
         self.input.update(cx, |input, _cx| {
             input.last_layout = Some(line);
-            input.last_bounds = Some(bounds);
+            input.last_bounds = Some(text_bounds);
         });
     }
 }

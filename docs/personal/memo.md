@@ -1,149 +1,137 @@
-# 個人用メモ — DbMiru 開発の進め方（超わかりやす版）
+# Personal memo — DbMiru workflow (easy-to-digest version)
 
-## このプロジェクトの前提
+## Project assumptions
 
-- コードは **Codex が書く**
-- 自分は **判断・確認・方向決め**をする
-- 仕様（md）が **コードより偉い**
-- チェック `[x]` を付けるのは **自分だけ**
-
----
-
-## 全体のマイルストーン概要（これだけ覚えれば OK）
-
-M0: 起動する（捨てない Hello World）
-M1: 実行できる（SELECT 1 が通る）
-M2: 見れる（テーブル・中身が分かる）
-M3: 育てられる（workspace・DB 抽象化）
-M4: 気持ちいい（履歴・コピー・操作感）
-
-### 各マイルストーンの意味（感覚的に）
-
-- **M0**  
-  →「このプロジェクト、続けられるな」
-- **M1**  
-  →「DB クライアントとして成立した」
-- **M2**  
-  →「仕事で普通に使える」
-- **M3**  
-  →「将来拡張しても壊れない」
-- **M4**  
-  →「触ってて楽しい」
-
-※ 先のマイルストーンは **存在を知ってるだけで OK**
+- **Codex writes the code**
+- I focus on **decisions, validation, and direction**
+- Specs (md files) **take priority over code**
+- Only I check items off with `[x]`
 
 ---
 
-## 毎日やること（超重要）
+## Milestone overview (just remember this)
 
-### 作業開始時（5 分）
+M0: Ship something that launches (keepable Hello World)  
+M1: Execute queries (SELECT 1 succeeds)  
+M2: View data (tables + contents visible)  
+M3: Grow the project (workspace + DB abstraction)  
+M4: Delightful to use (history, copy, smooth UX)
 
-1. `docs/status.md` を開く
-2. 今のマイルストーンを確認
-3. 次にやる **チェック項目を 1 つだけ**決める
-4. Codex に「その 1 項目だけ」依頼する
+### What each milestone feels like
 
----
+- **M0** → “This project can continue.”
+- **M1** → “It works as a DB client.”
+- **M2** → “Usable for real work.”
+- **M3** → “Future expansion won’t break it.”
+- **M4** → “It’s fun to touch.”
 
-### 作業終了時（5 分）
-
-1. 実際にアプリを触る
-2. 「使って OK か？」を自分の感覚で確認
-3. OK なものだけ `docs/milestones.md` に `[x]`
-4. `status.md` を軽く更新
-5. git commit
-
----
-
-## チェックリスト運用のルール（重要）
-
-- `[x]` = **次に進んでいいという自分の判断**
-- Codex が付けたら **戻して OK**
-- 「だいたい動く」は `[ ]`
-- 不安が少しでもあれば `[ ]`
+Knowing that later milestones exist is enough for now.
 
 ---
 
-## Codex との役割分担（再確認）
+## Daily routine (critical)
 
-### Codex の仕事
+### Start of session (~5 min)
 
-- 実装する
-- 「このチェックを満たしたと思う」と報告する
-- 手動確認手順を書く
+1. Open `docs/status.md`
+2. Confirm the current milestone
+3. Pick exactly **one** checklist item to tackle next
+4. Ask Codex to handle that single item
 
-### 自分の仕事
+### End of session (~5 min)
 
-- 実際に確認する
-- チェックを付けるか決める
-- 方向がズレてたら止める
-
----
-
-## 仕様駆動開発の一番大事な考え方
-
-- md を書くのが目的じゃない
-- **「これができたら OK」を先に決める**のが目的
-- コードはあとからついてくる
-
-迷ったらこの一文を思い出す：
-
-> 「これは今のマイルストーンに必要か？」
+1. Use the app yourself
+2. Decide if it “feels OK” to use
+3. Mark `[x]` in `docs/milestones.md` only for items that truly pass
+4. Lightly update `status.md`
+5. `git commit`
 
 ---
 
-## 詰まったときの対処法
+## Checklist rules
 
-やってはいけないこと：
-
-- 機能を足す
-- 大きく設計を変える
-- 完璧にしようとする
-
-やること：
-
-1. AGENTS.md を読む
-2. milestones.md の DoD を読む
-3. 「最小の前進」を 1 つ決める
+- `[x]` = **my decision that we can move forward**
+- If Codex checks something off, I can revert it
+- “Mostly works” stays `[ ]`
+- Any doubt → keep `[ ]`
 
 ---
 
-## よくある自分向け注意点
+## Division of roles with Codex
 
-- workspace 化は **M2/M3 で考える**
-- 先の DB 対応は **今考えない**
-- 「便利そう」はだいたい罠
-- 楽しくなくなったら一旦止めて OK
+### Codex
 
----
+- Implement features
+- Report “I believe this checklist item is satisfied”
+- Write manual verification steps
 
-## このメモの使い方
+### Me
 
-- 朝に読む
-- 迷ったら読む
-- 数週間放置した後に読む
-
-→ **すぐ再開できる**
+- Actually verify behavior
+- Decide whether to check the box
+- Stop things if direction drifts
 
 ---
 
-## 最後に（自分へのメモ）
+## Core idea of spec-first development
 
-- これは仕事じゃない
-- 正解を作る必要はない
-- 「続けられる」が一番の成功
+- The goal isn’t to write md files
+- The goal is to **define “what done looks like” first**
+- Code follows the spec
 
-**今日できた分だけで十分。**
+When in doubt, ask:
+
+> “Does this matter for the current milestone?”
 
 ---
 
-## 他にあると便利な個人用メモ（必要になったら）
+## When stuck
 
-必要になったら、こんなのも追加すると便利：
+Don’t do:
 
-- `decisions.md`  
-  → 「なぜこうしたか」を一言で残す
-- `ideas-later.md`  
-  → 今やらないアイデア置き場
-- `gotchas.md`  
-  → ハマりポイントメモ（環境依存とか）
+- Add features
+- Make large architectural changes
+- Chase perfection
+
+Do this instead:
+
+1. Read `AGENTS.md`
+2. Read the DoD section in `docs/milestones.md`
+3. Choose one “smallest forward step”
+
+---
+
+## Personal reminders
+
+- Defer workspace splitting until **M2/M3**
+- Don’t worry about future DB engines yet
+- “Seems convenient” is usually a trap
+- If it stops being fun, pause
+
+---
+
+## How to use this memo
+
+- Read in the morning
+- Revisit when unsure
+- Re-read after weeks away
+
+→ **Makes it easy to resume**
+
+---
+
+## Final note to self
+
+- This isn’t work
+- No need to build the perfect answer
+- “Being able to continue” is success
+
+**Whatever I finished today is enough.**
+
+---
+
+## Other handy personal docs (add when needed)
+
+- `decisions.md` → one-liner rationale for choices
+- `ideas-later.md` → parking lot for “not now” ideas
+- `gotchas.md` → trap notes (env issues, etc.)

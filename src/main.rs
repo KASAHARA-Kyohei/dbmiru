@@ -2,7 +2,7 @@ mod db;
 mod profiles;
 mod widgets;
 
-use std::{fs, path::PathBuf, time::Duration};
+use std::{borrow::Cow, fs, path::PathBuf, time::Duration};
 
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
@@ -20,6 +20,8 @@ type Result<T> = anyhow::Result<T>;
 const LIST_SCROLL_MAX_HEIGHT: f32 = 190.;
 const RESULT_COL_MIN_WIDTH: f32 = 160.;
 const RESULT_NUMBER_WIDTH: f32 = 64.;
+const APP_FONT_FAMILY: &str = "Zed Mono";
+const CONNECTING_TICK_FRAMES: u8 = 18;
 
 trait ScrollOverflowExt {
     fn overflow_scroll(self) -> Self;
@@ -45,6 +47,17 @@ impl ScrollOverflowExt for gpui::Div {
     }
 }
 
+trait AlignSelfExt {
+    fn align_self_end(self) -> Self;
+}
+
+impl AlignSelfExt for gpui::Div {
+    fn align_self_end(mut self) -> Self {
+        self.style().align_self = Some(gpui::AlignSelf::FlexEnd);
+        self
+    }
+}
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("DbMiru failed: {err:?}");
@@ -63,6 +76,7 @@ fn run() -> Result<()> {
         let profile_store = profile_store.clone();
         let event_tx = event_tx.clone();
         move |cx: &mut App| {
+            register_zed_fonts(cx);
             let bounds = Bounds::centered(None, gpui::size(px(1180.), px(760.)), cx);
             cx.open_window(
                 WindowOptions {
@@ -81,6 +95,17 @@ fn run() -> Result<()> {
     });
 
     Ok(())
+}
+
+fn register_zed_fonts(cx: &mut App) {
+    let fonts: Vec<Cow<'static, [u8]>> = vec![
+        Cow::Borrowed(include_bytes!("../assets/fonts/zed-mono-regular.ttf")),
+        Cow::Borrowed(include_bytes!("../assets/fonts/zed-mono-medium.ttf")),
+        Cow::Borrowed(include_bytes!("../assets/fonts/zed-mono-semibold.ttf")),
+    ];
+    if let Err(err) = cx.text_system().add_fonts(fonts) {
+        tracing::warn!("Failed to register bundled fonts: {err:?}");
+    }
 }
 
 fn init_tracing() {
@@ -122,6 +147,9 @@ struct DbMiruApp {
     active_tab: MainTab,
     event_tx: Sender<DbEvent>,
     event_rx: Receiver<DbEvent>,
+    connecting_indicator: u8,
+    connecting_indicator_frame: u8,
+    connecting_indicator_active: bool,
 }
 
 impl EventEmitter<RunQuery> for DbMiruApp {}
@@ -165,9 +193,45 @@ impl DbMiruApp {
             active_tab: MainTab::default(),
             event_tx,
             event_rx,
+            connecting_indicator: 0,
+            connecting_indicator_frame: 0,
+            connecting_indicator_active: false,
         };
         app.sync_form_with_selection(cx);
         app
+    }
+
+    fn ensure_connecting_indicator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.connecting_indicator_active {
+            return;
+        }
+        self.connecting_indicator_active = true;
+        self.schedule_connecting_indicator(window, cx);
+    }
+
+    fn schedule_connecting_indicator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.connecting_indicator_active {
+            return;
+        }
+        cx.on_next_frame(window, |this, window, cx| {
+            if !this.connection.is_busy() {
+                this.stop_connecting_indicator();
+                cx.notify();
+                return;
+            }
+            this.connecting_indicator_frame = this.connecting_indicator_frame.wrapping_add(1);
+            if this.connecting_indicator_frame % CONNECTING_TICK_FRAMES == 0 {
+                this.connecting_indicator = (this.connecting_indicator + 1) % 4;
+                cx.notify();
+            }
+            this.schedule_connecting_indicator(window, cx);
+        });
+    }
+
+    fn stop_connecting_indicator(&mut self) {
+        self.connecting_indicator_active = false;
+        self.connecting_indicator = 0;
+        self.connecting_indicator_frame = 0;
     }
 
     fn poll_events(&mut self, cx: &mut Context<Self>) {
@@ -187,6 +251,7 @@ impl DbMiruApp {
                 self.connection.status = ConnectionStatus::Connected(profile_name);
                 self.connection.session = Some(handle);
                 self.connection.last_error = None;
+                self.stop_connecting_indicator();
                 self.schema_browser.start_schema_load();
                 self.active_tab = MainTab::SchemaBrowser;
                 if let Some(session) = self.connection.session.as_ref() {
@@ -197,6 +262,7 @@ impl DbMiruApp {
                 self.connection.status = ConnectionStatus::Disconnected;
                 self.connection.session = None;
                 self.connection.last_error = Some(message);
+                self.stop_connecting_indicator();
                 self.schema_browser.reset();
                 self.active_tab = MainTab::SchemaBrowser;
             }
@@ -206,6 +272,7 @@ impl DbMiruApp {
                 if let Some(reason) = reason {
                     self.connection.last_error = Some(reason);
                 }
+                self.stop_connecting_indicator();
                 self.schema_browser.reset();
                 self.active_tab = MainTab::SchemaBrowser;
             }
@@ -328,14 +395,14 @@ impl DbMiruApp {
             || values.database.trim().is_empty()
             || values.username.trim().is_empty()
         {
-            self.profile_notice = Some("すべてのフィールドを入力してください".into());
+            self.profile_notice = Some("Please fill out every field.".into());
             cx.notify();
             return;
         }
         let port: u16 = match values.port.trim().parse() {
             Ok(port) => port,
             Err(_) => {
-                self.profile_notice = Some("ポート番号が不正です".into());
+                self.profile_notice = Some("Invalid port number.".into());
                 cx.notify();
                 return;
             }
@@ -370,9 +437,9 @@ impl DbMiruApp {
         }
 
         if let Err(err) = self.profile_store.save(&self.profiles) {
-            self.profile_notice = Some(format!("保存に失敗しました: {err}"));
+            self.profile_notice = Some(format!("Failed to save: {err}"));
         } else {
-            self.profile_notice = Some("保存しました".into());
+            self.profile_notice = Some("Saved.".into());
             self.profile_form_mode = ProfileFormMode::Hidden;
         }
         self.sync_form_with_selection(cx);
@@ -383,9 +450,9 @@ impl DbMiruApp {
         if let Some(profile_id) = self.selected_profile {
             self.profiles.retain(|p| p.id != profile_id);
             if let Err(err) = self.profile_store.save(&self.profiles) {
-                self.profile_notice = Some(format!("削除に失敗しました: {err}"));
+                self.profile_notice = Some(format!("Failed to delete: {err}"));
             } else {
-                self.profile_notice = Some("プロファイルを削除しました".into());
+                self.profile_notice = Some("Profile deleted.".into());
                 if let Some(current) = &self.connection.session
                     && matches!(self.connection.status, ConnectionStatus::Connected(_))
                 {
@@ -414,12 +481,12 @@ impl DbMiruApp {
             return;
         }
         let Some(profile_id) = self.selected_profile else {
-            self.connection.last_error = Some("プロファイルを選択してください".into());
+            self.connection.last_error = Some("Select a profile first.".into());
             cx.notify();
             return;
         };
         let Some(profile) = self.profiles.iter().find(|p| p.id == profile_id).cloned() else {
-            self.connection.last_error = Some("プロファイルが見つかりません".into());
+            self.connection.last_error = Some("Profile not found.".into());
             cx.notify();
             return;
         };
@@ -427,6 +494,9 @@ impl DbMiruApp {
 
         self.connection.status = ConnectionStatus::Connecting(profile.name.clone());
         self.connection.last_error = None;
+        self.connecting_indicator = 1;
+        self.connecting_indicator_frame = 0;
+        self.connecting_indicator_active = false;
         db::spawn_session(profile, password, self.event_tx.clone());
         self.password_input.update(cx, |input, _| input.clear());
         cx.notify();
@@ -439,17 +509,18 @@ impl DbMiruApp {
         self.connection.status = ConnectionStatus::Disconnected;
         self.schema_browser.reset();
         self.active_tab = MainTab::SchemaBrowser;
+        self.stop_connecting_indicator();
         cx.notify();
     }
 
     fn execute_query(&mut self, cx: &mut Context<Self>) {
         if self.connection.session.is_none() {
-            self.query_state.last_error = Some("まず接続してください".into());
+            self.query_state.last_error = Some("Connect to a database first.".into());
             cx.notify();
             return;
         }
         if matches!(self.connection.status, ConnectionStatus::Connecting(_)) {
-            self.query_state.last_error = Some("接続完了までお待ちください".into());
+            self.query_state.last_error = Some("Please wait for the connection to finish.".into());
             cx.notify();
             return;
         }
@@ -458,7 +529,7 @@ impl DbMiruApp {
         }
         let sql = self.sql_input.read(cx).text();
         if sql.trim().is_empty() {
-            self.query_state.last_error = Some("SQL を入力してください".into());
+            self.query_state.last_error = Some("Enter a SQL statement.".into());
             cx.notify();
             return;
         }
@@ -477,7 +548,8 @@ impl DbMiruApp {
 
     fn select_schema(&mut self, schema: String, cx: &mut Context<Self>) {
         let Some(session) = self.connection.session.as_ref() else {
-            self.schema_browser.last_error = Some("接続後にスキーマを読み込んでください".into());
+            self.schema_browser.last_error =
+                Some("Load schemas after establishing a connection.".into());
             cx.notify();
             return;
         };
@@ -515,8 +587,14 @@ impl Render for DbMiruApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.poll_events(cx);
         window.set_window_title("DbMiru");
+        if self.connection.is_busy() {
+            self.ensure_connecting_indicator(window, cx);
+        } else if self.connecting_indicator_active {
+            self.stop_connecting_indicator();
+        }
         div()
             .flex()
+            .font_family(APP_FONT_FAMILY)
             .size_full()
             .bg(rgb(0x0f172a))
             .text_color(rgb(0xf8fafc))
@@ -580,7 +658,7 @@ impl DbMiruApp {
                         div()
                             .text_lg()
                             .text_color(rgb(0x93c5fd))
-                            .child("接続プロファイル"),
+                            .child("Connection Profiles"),
                     )
                     .child(
                         div()
@@ -590,7 +668,7 @@ impl DbMiruApp {
                             .rounded_md()
                             .bg(rgb(0x2563eb))
                             .cursor_pointer()
-                            .child("新規作成")
+                            .child("New")
                             .on_mouse_up(
                                 MouseButton::Left,
                                 cx.listener(|this, _: &MouseUpEvent, _window, cx| {
@@ -622,7 +700,7 @@ impl DbMiruApp {
                     .rounded_md()
                     .bg(rgb(0x1d4ed8))
                     .text_sm()
-                    .child("編集")
+                    .child("Edit")
                     .cursor_pointer()
                     .on_mouse_up(
                         MouseButton::Left,
@@ -638,7 +716,7 @@ impl DbMiruApp {
                     .rounded_md()
                     .bg(rgb(0xb91c1c))
                     .text_sm()
-                    .child("削除")
+                    .child("Delete")
                     .cursor_pointer()
                     .on_mouse_up(
                         MouseButton::Left,
@@ -665,7 +743,7 @@ impl DbMiruApp {
                 div()
                     .text_sm()
                     .text_color(rgb(0x93c5fd))
-                    .child("プロファイル編集"),
+                    .child("Profile Details"),
             )
             .child(self.profile_form.name.clone())
             .child(self.profile_form.host.clone())
@@ -683,7 +761,7 @@ impl DbMiruApp {
                             .bg(rgb(0x22c55e))
                             .rounded_md()
                             .text_sm()
-                            .child("保存")
+                            .child("Save")
                             .cursor_pointer()
                             .on_mouse_up(
                                 MouseButton::Left,
@@ -699,7 +777,7 @@ impl DbMiruApp {
                             .bg(rgb(0x374151))
                             .rounded_md()
                             .text_sm()
-                            .child("キャンセル")
+                            .child("Cancel")
                             .cursor_pointer()
                             .on_mouse_up(
                                 MouseButton::Left,
@@ -733,17 +811,23 @@ impl DbMiruApp {
     }
 
     fn render_connection_panel(&mut self, cx: &mut Context<Self>) -> impl Element {
-        let status_text = self.connection.status_text();
+        let dot_count = if self.connection.is_busy() {
+            self.connecting_indicator as usize
+        } else {
+            0
+        };
+        let status_text = self.connection.status_text(dot_count);
         let error = self.connection.last_error.clone();
         let button_label = if self.connection.is_connected() {
-            "切断"
+            "Disconnect"
         } else {
-            "接続"
+            "Connect"
         };
 
         let mut panel = div()
             .flex()
             .flex_row()
+            .items_center()
             .gap_3()
             .p_4()
             .rounded_lg()
@@ -756,12 +840,7 @@ impl DbMiruApp {
                     .flex_col()
                     .gap_1()
                     .flex_grow()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0x9ca3af))
-                            .child("ステータス"),
-                    )
+                    .child(div().text_sm().text_color(rgb(0x9ca3af)).child("Status"))
                     .child(div().text_lg().child(status_text)),
             )
             .child(
@@ -769,27 +848,36 @@ impl DbMiruApp {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0x9ca3af))
-                            .child("パスワード"),
-                    )
+                    .w(px(220.))
+                    .child(div().text_sm().text_color(rgb(0x9ca3af)).child("Password"))
                     .child(self.password_input.clone()),
             )
             .child(
                 div()
+                    .align_self_end()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .h(px(36.))
                     .px_4()
-                    .py_2()
+                    .rounded_lg()
+                    .text_sm()
+                    .text_color(rgb(0xf8fafc))
                     .bg(if self.connection.is_connected() {
                         rgb(0xef4444)
                     } else {
                         rgb(0x22c55e)
                     })
-                    .rounded_md()
-                    .text_sm()
                     .cursor_pointer()
-                    .child(button_label)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(connection_action_icon(&self.connection.status))
+                            .child(button_label),
+                    )
                     .on_mouse_up(
                         MouseButton::Left,
                         cx.listener(|this, _: &MouseUpEvent, _window, cx| {
@@ -816,8 +904,8 @@ impl DbMiruApp {
 
     fn render_main_tabs(&mut self, cx: &mut Context<Self>) -> impl Element {
         let tabs = [
-            (MainTab::SchemaBrowser, "スキーマブラウザ"),
-            (MainTab::SqlEditor, "SQLエディタ"),
+            (MainTab::SchemaBrowser, "Schema Browser"),
+            (MainTab::SqlEditor, "SQL Editor"),
         ];
         let mut tab_buttons = Vec::new();
         for (tab, label) in tabs {
@@ -861,18 +949,7 @@ impl DbMiruApp {
             .flex()
             .flex_col()
             .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0x9ca3af))
-                            .child("表示モード"),
-                    )
-                    .child(div().flex().gap_2().children(tab_buttons)),
-            )
+            .child(div().flex().gap_2().children(tab_buttons))
             .child(content)
     }
 
@@ -881,13 +958,13 @@ impl DbMiruApp {
             div()
                 .text_sm()
                 .text_color(rgb(0x9ca3af))
-                .child("スキーマを読み込み中...")
+                .child("Loading schemas...")
                 .into_any()
         } else if self.schema_browser.schemas.is_empty() {
             let message = if self.connection.is_connected() {
-                "表示可能なスキーマがありません"
+                "No schemas available."
             } else {
-                "接続するとスキーマが表示されます"
+                "Connect to load schemas."
             };
             div()
                 .text_sm()
@@ -947,19 +1024,19 @@ impl DbMiruApp {
             div()
                 .text_sm()
                 .text_color(rgb(0x9ca3af))
-                .child("テーブルを読み込み中...")
+                .child("Loading tables...")
                 .into_any()
         } else if self.schema_browser.selected_schema.is_none() {
             div()
                 .text_sm()
                 .text_color(rgb(0x9ca3af))
-                .child("スキーマを選択してください")
+                .child("Select a schema")
                 .into_any()
         } else if self.schema_browser.tables.is_empty() {
             div()
                 .text_sm()
                 .text_color(rgb(0x9ca3af))
-                .child("テーブルが見つかりません")
+                .child("No tables found")
                 .into_any()
         } else {
             let items = self.schema_browser.tables.iter().map(|table| {
@@ -1014,19 +1091,19 @@ impl DbMiruApp {
             div()
                 .text_sm()
                 .text_color(rgb(0x9ca3af))
-                .child("カラム情報を読み込み中...")
+                .child("Loading columns...")
                 .into_any()
         } else if self.schema_browser.selected_table.is_none() {
             div()
                 .text_sm()
                 .text_color(rgb(0x9ca3af))
-                .child("テーブルを選択してください")
+                .child("Select a table")
                 .into_any()
         } else if self.schema_browser.columns.is_empty() {
             div()
                 .text_sm()
                 .text_color(rgb(0x9ca3af))
-                .child("カラムが見つかりません")
+                .child("No columns found")
                 .into_any()
         } else {
             let items = self.schema_browser.columns.iter().map(|column| {
@@ -1066,65 +1143,63 @@ impl DbMiruApp {
                 .into_any()
         };
 
-        let mut panel = div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_4()
-            .rounded_lg()
-            .bg(rgb(0x111827))
-            .border_1()
-            .border_color(rgb(0x1f2937))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(0x9ca3af))
-                    .child("スキーマブラウザ"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(div().text_xs().text_color(rgb(0x93c5fd)).child("Schemas"))
-                            .child(schema_list),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(div().text_xs().text_color(rgb(0x93c5fd)).child("Tables"))
-                            .child(table_list),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .flex_grow()
-                            .child(div().text_xs().text_color(rgb(0x93c5fd)).child("Columns"))
-                            .child(column_list),
-                    ),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(0x6b7280))
-                    .child("右クリックでスキーマ/テーブル名をコピーできます。カラム名は左クリックでコピーします。"),
-            )
-            .child(self.render_preview_panel());
+        let mut panel =
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_4()
+                .rounded_lg()
+                .bg(rgb(0x111827))
+                .border_1()
+                .border_color(rgb(0x1f2937))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(0x9ca3af))
+                        .child("Schema Browser"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap_3()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(div().text_xs().text_color(rgb(0x93c5fd)).child("Schemas"))
+                                .child(schema_list),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(div().text_xs().text_color(rgb(0x93c5fd)).child("Tables"))
+                                .child(table_list),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .flex_grow()
+                                .child(div().text_xs().text_color(rgb(0x93c5fd)).child("Columns"))
+                                .child(column_list),
+                        ),
+                )
+                .child(div().text_xs().text_color(rgb(0x6b7280)).child(
+                    "Right-click to copy schema/table names. Left-click copies column names.",
+                ))
+                .child(self.render_preview_panel());
 
         if let Some(error) = self.schema_browser.last_error.clone() {
             panel = panel.child(
                 div()
                     .text_xs()
                     .text_color(rgb(0xf87171))
-                    .child(format!("メタデータ取得エラー: {error}")),
+                    .child(format!("Metadata fetch error: {error}")),
             );
         }
 
@@ -1136,16 +1211,16 @@ impl DbMiruApp {
             self.schema_browser.selected_schema.as_ref(),
             self.schema_browser.selected_table.as_ref(),
         ) {
-            format!("{schema}.{table} のプレビュー (最大 {PREVIEW_LIMIT} 行)")
+            format!("Preview: {schema}.{table} (up to {PREVIEW_LIMIT} rows)")
         } else {
-            "テーブルプレビュー".into()
+            "Table preview".into()
         };
 
         let content: AnyElement = if self.schema_browser.preview_loading {
             div()
                 .text_sm()
                 .text_color(rgb(0x9ca3af))
-                .child("プレビューを読み込み中...")
+                .child("Loading preview...")
                 .into_any()
         } else if let Some(view) = self.schema_browser.preview.as_ref() {
             div()
@@ -1161,7 +1236,7 @@ impl DbMiruApp {
             div()
                 .text_sm()
                 .text_color(rgb(0x9ca3af))
-                .child("テーブルを選択するとプレビューが表示されます")
+                .child("Select a table to see its preview")
                 .into_any()
         };
 
@@ -1189,7 +1264,7 @@ impl DbMiruApp {
                 div()
                     .text_sm()
                     .text_color(rgb(0x9ca3af))
-                    .child("SQL エディタ"),
+                    .child("SQL Editor"),
             )
             .child(
                 div()
@@ -1210,7 +1285,7 @@ impl DbMiruApp {
                             .bg(rgb(0x2563eb))
                             .rounded_md()
                             .text_sm()
-                            .child("実行 (Cmd/Ctrl + Enter)")
+                            .child("Run (Cmd/Ctrl + Enter)")
                             .cursor_pointer()
                             .on_mouse_up(
                                 MouseButton::Left,
@@ -1221,7 +1296,7 @@ impl DbMiruApp {
                     )
                     .when(
                         matches!(self.query_state.status, QueryStatus::Running),
-                        |node| node.child(div().text_sm().child("実行中...")),
+                        |node| node.child(div().text_sm().child("Running...")),
                     ),
             );
 
@@ -1230,7 +1305,7 @@ impl DbMiruApp {
                 div()
                     .text_sm()
                     .text_color(rgb(0xf87171))
-                    .child(format!("エラー: {text}")),
+                    .child(format!("Error: {text}")),
             );
         }
 
@@ -1242,14 +1317,14 @@ impl DbMiruApp {
             Some(result) => {
                 let meta = if result.truncated {
                     format!(
-                        "{} 行 ({} ms, 上位 {} 行を表示 / 最大 {ROW_LIMIT})",
+                        "{} rows ({} ms, showing top {} / max {ROW_LIMIT})",
                         result.row_count,
                         result.duration.as_millis(),
                         result.rows.len()
                     )
                 } else {
                     format!(
-                        "{} 行 ({} ms)",
+                        "{} rows ({} ms)",
                         result.row_count,
                         result.duration.as_millis()
                     )
@@ -1276,8 +1351,8 @@ impl DbMiruApp {
                     .text_sm()
                     .text_color(rgb(0x9ca3af))
                     .child(match self.query_state.status {
-                        QueryStatus::Running => "クエリを実行しています...",
-                        QueryStatus::Idle => "結果がここに表示されます",
+                        QueryStatus::Running => "Query is running...",
+                        QueryStatus::Idle => "Results will appear here.",
                     })
             }
         };
@@ -1295,7 +1370,7 @@ impl DbMiruApp {
                 div()
                     .text_sm()
                     .text_color(rgb(0x9ca3af))
-                    .child("結果 / エラー"),
+                    .child("Results / Errors"),
             )
             .child(content)
     }
@@ -1366,6 +1441,16 @@ impl DbMiruApp {
     }
 }
 
+fn connection_action_icon(status: &ConnectionStatus) -> gpui::Div {
+    let (color, size) = match status {
+        ConnectionStatus::Connected(_) => (rgb(0x22c55e), px(10.)),
+        ConnectionStatus::Connecting(_) => (rgb(0xfbbf24), px(10.)),
+        ConnectionStatus::Disconnected => (rgb(0xf87171), px(8.)),
+    };
+
+    div().w(size).h(size).rounded_full().bg(color)
+}
+
 #[derive(Default)]
 struct ConnectionState {
     status: ConnectionStatus,
@@ -1382,11 +1467,15 @@ impl ConnectionState {
         matches!(self.status, ConnectionStatus::Connecting(_))
     }
 
-    fn status_text(&self) -> String {
+    fn status_text(&self, dots: usize) -> String {
         match &self.status {
-            ConnectionStatus::Disconnected => "切断済み".into(),
-            ConnectionStatus::Connecting(name) => format!("{name} に接続中..."),
-            ConnectionStatus::Connected(name) => format!("{name} に接続しました"),
+            ConnectionStatus::Disconnected => "Disconnected".into(),
+            ConnectionStatus::Connecting(name) => {
+                const DOTS: [&str; 4] = ["", ".", "..", "..."];
+                let suffix = DOTS[dots.min(3)];
+                format!("Connecting to {name}{suffix}")
+            }
+            ConnectionStatus::Connected(name) => format!("Connected to {name}"),
         }
     }
 }
@@ -1515,11 +1604,11 @@ struct ProfileForm {
 impl ProfileForm {
     fn new(cx: &mut Context<DbMiruApp>) -> Self {
         Self {
-            name: cx.new(|cx| TextInput::new(cx, "", "名前")),
-            host: cx.new(|cx| TextInput::new(cx, "", "ホスト")),
-            port: cx.new(|cx| TextInput::new(cx, "5432", "ポート")),
-            database: cx.new(|cx| TextInput::new(cx, "", "データベース")),
-            username: cx.new(|cx| TextInput::new(cx, "", "ユーザー名")),
+            name: cx.new(|cx| TextInput::new(cx, "", "Name")),
+            host: cx.new(|cx| TextInput::new(cx, "", "Host")),
+            port: cx.new(|cx| TextInput::new(cx, "5432", "Port")),
+            database: cx.new(|cx| TextInput::new(cx, "", "Database")),
+            username: cx.new(|cx| TextInput::new(cx, "", "Username")),
         }
     }
 

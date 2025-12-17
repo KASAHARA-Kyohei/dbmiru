@@ -51,12 +51,12 @@ Run queries against PostgreSQL and view results.
 
 ### Manual smoke checklist
 
-- [x] アプリ起動時に接続プロフィール一覧がサイドバーへ表示される
-- [x] 新規プロフィール作成 → 保存 → 一覧へ即反映 → 編集/削除が反映される
-- [x] プロフィール選択後に Connect/Disconnect が UI 上の状態ラベルへ即反映される
-- [x] SQL エディタへ `SELECT 1` を入力して Cmd+Enter 実行 → 結果テーブルへ最大 1000 行で表示される
-- [x] 無効な SQL を実行するとエラーサマリ/詳細が下部パネルへ表示され UI が落ちない
-- [x] すべてのテキストフィールドで Backspace/Delete と矢印キーを使った基本的な編集/削除操作が動作する
+- [x] When the app launches, the connection profile list appears in the sidebar
+- [x] Creating a new profile → saving → immediately reflected in the list → edits/deletes are also reflected
+- [x] After selecting a profile, Connect/Disconnect immediately updates the status label in the UI
+- [x] Enter `SELECT 1` in the SQL editor and run with Cmd/Ctrl + Enter → up to 1000 rows display in the result table
+- [x] Running invalid SQL shows the error summary/details in the lower panel and the UI stays responsive
+- [x] All text fields support basic editing with Backspace/Delete and arrow keys
 
 ---
 
@@ -74,7 +74,6 @@ Let users browse basic metadata and preview tables.
 - [ ] Table preview: `SELECT * FROM <table> LIMIT N`
 - [ ] Improve result table UX (copy cell/row basics if feasible)
 - [ ] Decide workspace split boundaries (app / core / db / storage) and document in `docs/architecture.md`
-- [ ] Design and implement secure password storage (OS keychain or master password)
 
 ### DoD (Definition of Done)
 
