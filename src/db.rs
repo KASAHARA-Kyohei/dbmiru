@@ -18,7 +18,7 @@ pub const PREVIEW_LIMIT: usize = 50;
 
 pub enum DbEvent {
     Connected(DbSessionHandle),
-    ConnectionFailed(String),
+    ConnectionFailed(ConnectionError),
     ConnectionClosed(Option<String>),
     QueryFinished(QueryResult),
     QueryFailed(String),
@@ -52,6 +52,21 @@ pub struct QueryResult {
 pub struct ColumnMetadata {
     pub name: String,
     pub data_type: String,
+}
+
+#[derive(Clone)]
+pub struct ConnectionError {
+    pub user_message: String,
+    pub detail: String,
+}
+
+impl ConnectionError {
+    fn new(user_message: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            user_message: user_message.into(),
+            detail: detail.into(),
+        }
+    }
 }
 
 pub struct DbSessionHandle {
@@ -139,7 +154,9 @@ pub fn spawn_session(profile: ConnectionProfile, password: String, event_tx: Sen
         let failure_tx = handshake_event_tx.clone();
         move || {
             if let Err(err) = run_worker(profile, password, ready_tx, worker_event_tx) {
-                let _ = failure_tx.send_blocking(DbEvent::ConnectionFailed(err.to_string()));
+                let failure =
+                    ConnectionError::new("Failed to connect to database worker.", err.to_string());
+                let _ = failure_tx.send_blocking(DbEvent::ConnectionFailed(failure));
             }
         }
     });
@@ -150,9 +167,11 @@ pub fn spawn_session(profile: ConnectionProfile, password: String, event_tx: Sen
             let _ = handshake_event_tx.send_blocking(DbEvent::Connected(handle));
         }
         Err(_) => {
-            let _ = handshake_event_tx.send_blocking(DbEvent::ConnectionFailed(
-                "Failed to initialize connection worker".into(),
-            ));
+            let failure = ConnectionError::new(
+                "Failed to initialize connection worker.",
+                "Connection worker channel closed before ready".to_string(),
+            );
+            let _ = handshake_event_tx.send_blocking(DbEvent::ConnectionFailed(failure));
             let _ = join_handle.join();
         }
     });
@@ -179,8 +198,9 @@ fn run_worker(
         let (client, connection) = match config.connect(NoTls).await {
             Ok(conn) => conn,
             Err(err) => {
+                let failure = classify_connection_error(&err);
                 let _ = event_tx
-                    .send(DbEvent::ConnectionFailed(format!("{}", err)))
+                    .send(DbEvent::ConnectionFailed(failure.clone()))
                     .await;
                 return Err(err.into());
             }
@@ -494,4 +514,38 @@ fn format_bytea(bytes: &[u8]) -> String {
         let _ = write!(out, "{:02x}", byte);
     }
     out
+}
+
+fn classify_connection_error(err: &tokio_postgres::Error) -> ConnectionError {
+    use tokio_postgres::error::SqlState;
+
+    if let Some(db_err) = err.as_db_error() {
+        let detail = err.to_string();
+        match db_err.code() {
+            &SqlState::INVALID_PASSWORD => {
+                return ConnectionError::new("Password authentication failed.", detail);
+            }
+            &SqlState::INVALID_AUTHORIZATION_SPECIFICATION => {
+                return ConnectionError::new("User does not exist or lacks permission.", detail);
+            }
+            &SqlState::INVALID_CATALOG_NAME => {
+                return ConnectionError::new("Database does not exist.", detail);
+            }
+            _ => {}
+        }
+        return ConnectionError::new(db_err.message().to_string(), detail);
+    }
+
+    let detail = err.to_string();
+    let lower = detail.to_lowercase();
+    if lower.contains("connection refused") {
+        ConnectionError::new(
+            "Unable to reach the database host (connection refused).",
+            detail,
+        )
+    } else if lower.contains("timeout") {
+        ConnectionError::new("Connection timed out.", detail)
+    } else {
+        ConnectionError::new("Failed to connect to the database.", detail)
+    }
 }

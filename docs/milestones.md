@@ -68,10 +68,10 @@ Let users browse basic metadata and preview tables.
 
 ### Checklist
 
-- [ ] List schemas
-- [ ] List tables
-- [ ] List columns for selected table
-- [ ] Table preview: `SELECT * FROM <table> LIMIT N`
+- [x] List schemas
+- [x] List tables
+- [x] List columns for selected table
+- [x] Table preview: `SELECT * FROM <table> LIMIT N`
 - [ ] Improve result table UX (copy cell/row basics if feasible)
 - [ ] Decide workspace split boundaries (app / core / db / storage) and document in `docs/architecture.md`
 

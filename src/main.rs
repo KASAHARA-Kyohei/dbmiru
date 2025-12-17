@@ -10,7 +10,7 @@ use db::{ColumnMetadata, DbEvent, DbSessionHandle, PREVIEW_LIMIT, QueryResult, R
 use directories::BaseDirs;
 use gpui::{
     AnyElement, App, Application, Bounds, ClipboardItem, Context, Element, EventEmitter,
-    IntoElement, KeyBinding, MouseButton, MouseUpEvent, Render, Window, WindowBounds,
+    IntoElement, KeyBinding, MouseButton, MouseUpEvent, Render, SharedString, Window, WindowBounds,
     WindowOptions, actions, div, prelude::*, px, rgb,
 };
 use profiles::{ConnectionProfile, ProfileId, ProfileStore};
@@ -258,10 +258,11 @@ impl DbMiruApp {
                     session.load_schemas();
                 }
             }
-            DbEvent::ConnectionFailed(message) => {
+            DbEvent::ConnectionFailed(error) => {
                 self.connection.status = ConnectionStatus::Disconnected;
                 self.connection.session = None;
-                self.connection.last_error = Some(message);
+                tracing::warn!("Connection failed: {}", error.detail);
+                self.connection.last_error = Some(error.user_message);
                 self.stop_connecting_indicator();
                 self.schema_browser.reset();
                 self.active_tab = MainTab::SchemaBrowser;
@@ -891,12 +892,7 @@ impl DbMiruApp {
             );
 
         if let Some(text) = error {
-            panel = panel.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(div().text_xs().text_color(rgb(0xf87171)).child(text)),
-            );
+            panel = panel.child(error_banner(&text).align_self_end());
         }
 
         panel
@@ -1195,12 +1191,7 @@ impl DbMiruApp {
                 .child(self.render_preview_panel());
 
         if let Some(error) = self.schema_browser.last_error.clone() {
-            panel = panel.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(0xf87171))
-                    .child(format!("Metadata fetch error: {error}")),
-            );
+            panel = panel.child(error_banner(&error));
         }
 
         panel
@@ -1301,12 +1292,7 @@ impl DbMiruApp {
             );
 
         if let Some(text) = self.query_state.last_error.clone() {
-            panel = panel.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(0xf87171))
-                    .child(format!("Error: {text}")),
-            );
+            panel = panel.child(error_banner(&text));
         }
 
         panel
@@ -1449,6 +1435,38 @@ fn connection_action_icon(status: &ConnectionStatus) -> gpui::Div {
     };
 
     div().w(size).h(size).rounded_full().bg(color)
+}
+
+fn error_banner(message: &str) -> gpui::Div {
+    let message_text = SharedString::from(message.to_owned());
+    div()
+        .flex()
+        .items_start()
+        .gap_2()
+        .p_3()
+        .rounded_md()
+        .bg(rgb(0x2f1b1b))
+        .border_1()
+        .border_color(rgb(0x7f1d1d))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(20.))
+                .h(px(20.))
+                .rounded_full()
+                .bg(rgb(0xb91c1c))
+                .text_xs()
+                .text_color(rgb(0xfef2f2))
+                .child("!"),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(0xfef2f2))
+                .child(message_text),
+        )
 }
 
 #[derive(Default)]
