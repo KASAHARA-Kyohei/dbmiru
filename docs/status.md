@@ -1,13 +1,14 @@
-# 現在のマイルストーン
+# Current milestone
 
-M1
+M2
 
-## 次にやること
+## Next actions
 
-- 本物の PostgreSQL (ローカル) で `SELECT 1` スモークを行い UI 全体を触ってみる
-- M1 実装をウォークスルーして改善点/バックログを整理し、M2 のタスク分解を始める
+- Map out the pgAdmin-like metadata browsing experience and lock the UI spec for schemas/tables/columns/preview
+- Add metadata-fetch APIs to the `db` module and call them asynchronously from the UI
+- Research secure password storage options (OS keychain or master password) and decide the M2 implementation approach
 
-## メモ
+## Notes
 
-- Metal Toolchain の導入で `cargo clippy --no-deps` まで通るようになった
-- gpui + tokio-postgres 連携のランタイム設計は `DbMiruApp` に集約済み
+- M1 DoD is already met (connect / run SQL / show results and errors)
+- In M2 we focus on metadata browsing and secure credential management when breaking down tasks

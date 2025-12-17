@@ -18,3 +18,4 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 unicode-segmentation = "1.11.0"
 uuid = { version = "1.10.0", features = ["serde", "v4"] }
+keyring = "2.3.2"
