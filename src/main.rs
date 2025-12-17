@@ -6,16 +6,44 @@ use std::{fs, path::PathBuf, time::Duration};
 
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
-use db::{DbEvent, DbSessionHandle, QueryResult, ROW_LIMIT};
+use db::{ColumnMetadata, DbEvent, DbSessionHandle, PREVIEW_LIMIT, QueryResult, ROW_LIMIT};
 use directories::BaseDirs;
 use gpui::{
-    App, Application, Bounds, Context, Element, EventEmitter, IntoElement, KeyBinding, MouseButton,
-    MouseUpEvent, Render, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb,
+    AnyElement, App, Application, Bounds, ClipboardItem, Context, Element, EventEmitter,
+    IntoElement, KeyBinding, MouseButton, MouseUpEvent, Render, Window, WindowBounds,
+    WindowOptions, actions, div, prelude::*, px, rgb,
 };
 use profiles::{ConnectionProfile, ProfileId, ProfileStore};
 use widgets::TextInput;
 
 type Result<T> = anyhow::Result<T>;
+const LIST_SCROLL_MAX_HEIGHT: f32 = 190.;
+const RESULT_COL_MIN_WIDTH: f32 = 160.;
+const RESULT_NUMBER_WIDTH: f32 = 64.;
+
+trait ScrollOverflowExt {
+    fn overflow_scroll(self) -> Self;
+    fn overflow_y_scroll(self) -> Self;
+    fn restrict_scroll_to_axis(self) -> Self;
+}
+
+impl ScrollOverflowExt for gpui::Div {
+    fn overflow_scroll(mut self) -> Self {
+        self.style().overflow.x = Some(gpui::Overflow::Scroll);
+        self.style().overflow.y = Some(gpui::Overflow::Scroll);
+        self
+    }
+
+    fn overflow_y_scroll(mut self) -> Self {
+        self.style().overflow.y = Some(gpui::Overflow::Scroll);
+        self
+    }
+
+    fn restrict_scroll_to_axis(mut self) -> Self {
+        self.style().restrict_scroll_to_axis = Some(true);
+        self
+    }
+}
 
 fn main() {
     if let Err(err) = run() {
@@ -90,6 +118,8 @@ struct DbMiruApp {
     sql_input: gpui::Entity<TextInput>,
     connection: ConnectionState,
     query_state: QueryState,
+    schema_browser: SchemaBrowserState,
+    active_tab: MainTab,
     event_tx: Sender<DbEvent>,
     event_rx: Receiver<DbEvent>,
 }
@@ -131,6 +161,8 @@ impl DbMiruApp {
             sql_input,
             connection: ConnectionState::default(),
             query_state: QueryState::default(),
+            schema_browser: SchemaBrowserState::default(),
+            active_tab: MainTab::default(),
             event_tx,
             event_rx,
         };
@@ -155,11 +187,18 @@ impl DbMiruApp {
                 self.connection.status = ConnectionStatus::Connected(profile_name);
                 self.connection.session = Some(handle);
                 self.connection.last_error = None;
+                self.schema_browser.start_schema_load();
+                self.active_tab = MainTab::SchemaBrowser;
+                if let Some(session) = self.connection.session.as_ref() {
+                    session.load_schemas();
+                }
             }
             DbEvent::ConnectionFailed(message) => {
                 self.connection.status = ConnectionStatus::Disconnected;
                 self.connection.session = None;
                 self.connection.last_error = Some(message);
+                self.schema_browser.reset();
+                self.active_tab = MainTab::SchemaBrowser;
             }
             DbEvent::ConnectionClosed(reason) => {
                 self.connection.status = ConnectionStatus::Disconnected;
@@ -167,6 +206,8 @@ impl DbMiruApp {
                 if let Some(reason) = reason {
                     self.connection.last_error = Some(reason);
                 }
+                self.schema_browser.reset();
+                self.active_tab = MainTab::SchemaBrowser;
             }
             DbEvent::QueryFinished(result) => {
                 self.query_state.status = QueryStatus::Idle;
@@ -177,6 +218,64 @@ impl DbMiruApp {
                 self.query_state.status = QueryStatus::Idle;
                 self.query_state.last_result = None;
                 self.query_state.last_error = Some(message);
+            }
+            DbEvent::SchemasLoaded(schemas) => {
+                self.schema_browser.schemas_loading = false;
+                self.schema_browser.schemas = schemas;
+                self.schema_browser.last_error = None;
+                if self.schema_browser.schemas.is_empty() {
+                    self.schema_browser.selected_schema = None;
+                } else if self.schema_browser.selected_schema.is_none() {
+                    if let Some(first) = self.schema_browser.schemas.first().cloned() {
+                        self.select_schema(first, cx);
+                    }
+                }
+            }
+            DbEvent::TablesLoaded { schema, tables } => {
+                if self.schema_browser.selected_schema.as_deref() == Some(schema.as_str()) {
+                    self.schema_browser.tables_loading = false;
+                    self.schema_browser.tables = tables;
+                    self.schema_browser.last_error = None;
+                    if self.schema_browser.tables.is_empty() {
+                        self.schema_browser.selected_table = None;
+                        self.schema_browser.columns.clear();
+                        self.schema_browser.preview = None;
+                    } else if self.schema_browser.selected_table.is_none() {
+                        if let Some(first) = self.schema_browser.tables.first().cloned() {
+                            self.select_table(first, cx);
+                        }
+                    }
+                }
+            }
+            DbEvent::ColumnsLoaded {
+                schema,
+                table,
+                columns,
+            } => {
+                if self.schema_browser.selected_schema.as_deref() == Some(schema.as_str())
+                    && self.schema_browser.selected_table.as_deref() == Some(table.as_str())
+                {
+                    self.schema_browser.columns_loading = false;
+                    self.schema_browser.columns = columns;
+                    self.schema_browser.last_error = None;
+                }
+            }
+            DbEvent::TablePreviewReady {
+                schema,
+                table,
+                result,
+            } => {
+                if self.schema_browser.selected_schema.as_deref() == Some(schema.as_str())
+                    && self.schema_browser.selected_table.as_deref() == Some(table.as_str())
+                {
+                    self.schema_browser.preview_loading = false;
+                    self.schema_browser.preview = Some(QueryResultView::from(result));
+                    self.schema_browser.last_error = None;
+                }
+            }
+            DbEvent::MetadataFailed(message) => {
+                self.schema_browser.last_error = Some(message);
+                self.schema_browser.stop_loading();
             }
         }
         cx.notify();
@@ -247,6 +346,7 @@ impl DbMiruApp {
             port,
             values.database.trim().to_string(),
             values.username.trim().to_string(),
+            false,
         );
 
         match self.profile_form_mode {
@@ -337,6 +437,8 @@ impl DbMiruApp {
             session.disconnect();
         }
         self.connection.status = ConnectionStatus::Disconnected;
+        self.schema_browser.reset();
+        self.active_tab = MainTab::SchemaBrowser;
         cx.notify();
     }
 
@@ -367,6 +469,45 @@ impl DbMiruApp {
             session.execute(sql);
             cx.notify();
         }
+    }
+
+    fn copy_to_clipboard(&mut self, value: String, cx: &mut Context<Self>) {
+        let _ = cx.write_to_clipboard(ClipboardItem::new_string(value));
+    }
+
+    fn select_schema(&mut self, schema: String, cx: &mut Context<Self>) {
+        let Some(session) = self.connection.session.as_ref() else {
+            self.schema_browser.last_error = Some("接続後にスキーマを読み込んでください".into());
+            cx.notify();
+            return;
+        };
+        self.schema_browser.selected_schema = Some(schema.clone());
+        self.schema_browser.selected_table = None;
+        self.schema_browser.tables.clear();
+        self.schema_browser.columns.clear();
+        self.schema_browser.preview = None;
+        self.schema_browser.tables_loading = true;
+        self.schema_browser.columns_loading = false;
+        self.schema_browser.preview_loading = false;
+        session.load_tables(schema);
+        cx.notify();
+    }
+
+    fn select_table(&mut self, table: String, cx: &mut Context<Self>) {
+        let Some(schema) = self.schema_browser.selected_schema.clone() else {
+            return;
+        };
+        let Some(session) = self.connection.session.as_ref() else {
+            return;
+        };
+        self.schema_browser.selected_table = Some(table.clone());
+        self.schema_browser.columns.clear();
+        self.schema_browser.preview = None;
+        self.schema_browser.columns_loading = true;
+        self.schema_browser.preview_loading = true;
+        session.load_columns(schema.clone(), table.clone());
+        session.preview_table(schema, table, db::PREVIEW_LIMIT);
+        cx.notify();
     }
 }
 
@@ -581,11 +722,14 @@ impl DbMiruApp {
             .flex()
             .flex_col()
             .flex_grow()
+            .min_w(px(0.))
+            .h_full()
+            .overflow_y_scroll()
+            .id("workspace_scroll")
             .p_4()
             .gap_4()
             .child(self.render_connection_panel(cx))
-            .child(self.render_editor_panel(cx))
-            .child(self.render_results_panel())
+            .child(self.render_main_tabs(cx))
     }
 
     fn render_connection_panel(&mut self, cx: &mut Context<Self>) -> impl Element {
@@ -670,6 +814,365 @@ impl DbMiruApp {
         panel
     }
 
+    fn render_main_tabs(&mut self, cx: &mut Context<Self>) -> impl Element {
+        let tabs = [
+            (MainTab::SchemaBrowser, "スキーマブラウザ"),
+            (MainTab::SqlEditor, "SQLエディタ"),
+        ];
+        let mut tab_buttons = Vec::new();
+        for (tab, label) in tabs {
+            let is_active = self.active_tab == tab;
+            let tab_value = tab;
+            tab_buttons.push(
+                div()
+                    .px_3()
+                    .py_2()
+                    .rounded_md()
+                    .text_sm()
+                    .bg(if is_active {
+                        rgb(0x2563eb)
+                    } else {
+                        rgb(0x1f2937)
+                    })
+                    .cursor_pointer()
+                    .child(label)
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(move |this, _: &MouseUpEvent, _window, cx| {
+                            this.active_tab = tab_value;
+                            cx.notify();
+                        }),
+                    ),
+            );
+        }
+
+        let content: AnyElement = match self.active_tab {
+            MainTab::SchemaBrowser => self.render_schema_browser(cx).into_any(),
+            MainTab::SqlEditor => div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(self.render_editor_panel(cx))
+                .child(self.render_results_panel())
+                .into_any(),
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0x9ca3af))
+                            .child("表示モード"),
+                    )
+                    .child(div().flex().gap_2().children(tab_buttons)),
+            )
+            .child(content)
+    }
+
+    fn render_schema_browser(&mut self, cx: &mut Context<Self>) -> impl Element {
+        let schema_list: AnyElement = if self.schema_browser.schemas_loading {
+            div()
+                .text_sm()
+                .text_color(rgb(0x9ca3af))
+                .child("スキーマを読み込み中...")
+                .into_any()
+        } else if self.schema_browser.schemas.is_empty() {
+            let message = if self.connection.is_connected() {
+                "表示可能なスキーマがありません"
+            } else {
+                "接続するとスキーマが表示されます"
+            };
+            div()
+                .text_sm()
+                .text_color(rgb(0x9ca3af))
+                .child(message)
+                .into_any()
+        } else {
+            let items = self.schema_browser.schemas.iter().map(|schema| {
+                let schema_name = schema.clone();
+                let schema_name_for_copy = schema_name.clone();
+                let is_selected = self
+                    .schema_browser
+                    .selected_schema
+                    .as_ref()
+                    .map(|current| current == schema)
+                    .unwrap_or(false);
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .p_2()
+                    .rounded_md()
+                    .bg(if is_selected {
+                        rgb(0x1e293b)
+                    } else {
+                        rgb(0x0b1120)
+                    })
+                    .border_1()
+                    .border_color(rgb(0x1f2937))
+                    .hover(|style| style.bg(rgb(0x1f2435)))
+                    .cursor_pointer()
+                    .child(div().text_sm().child(schema.clone()))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(move |this, _: &MouseUpEvent, _window, cx| {
+                            this.select_schema(schema_name.clone(), cx);
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Right,
+                        cx.listener(move |this, _: &MouseUpEvent, _window, cx| {
+                            this.copy_to_clipboard(schema_name_for_copy.clone(), cx);
+                        }),
+                    )
+            });
+            div()
+                .max_h(px(LIST_SCROLL_MAX_HEIGHT))
+                .min_w(px(0.))
+                .overflow_y_scroll()
+                .restrict_scroll_to_axis()
+                .id("schema_list_scroll")
+                .child(div().flex().flex_col().gap_1().children(items))
+                .into_any()
+        };
+
+        let table_list: AnyElement = if self.schema_browser.tables_loading {
+            div()
+                .text_sm()
+                .text_color(rgb(0x9ca3af))
+                .child("テーブルを読み込み中...")
+                .into_any()
+        } else if self.schema_browser.selected_schema.is_none() {
+            div()
+                .text_sm()
+                .text_color(rgb(0x9ca3af))
+                .child("スキーマを選択してください")
+                .into_any()
+        } else if self.schema_browser.tables.is_empty() {
+            div()
+                .text_sm()
+                .text_color(rgb(0x9ca3af))
+                .child("テーブルが見つかりません")
+                .into_any()
+        } else {
+            let items = self.schema_browser.tables.iter().map(|table| {
+                let table_name = table.clone();
+                let table_name_for_copy = table_name.clone();
+                let is_selected = self
+                    .schema_browser
+                    .selected_table
+                    .as_ref()
+                    .map(|current| current == table)
+                    .unwrap_or(false);
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .p_2()
+                    .rounded_md()
+                    .bg(if is_selected {
+                        rgb(0x1e293b)
+                    } else {
+                        rgb(0x0b1120)
+                    })
+                    .border_1()
+                    .border_color(rgb(0x1f2937))
+                    .hover(|style| style.bg(rgb(0x1f2435)))
+                    .cursor_pointer()
+                    .child(div().text_sm().child(table.clone()))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(move |this, _: &MouseUpEvent, _window, cx| {
+                            this.select_table(table_name.clone(), cx);
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Right,
+                        cx.listener(move |this, _: &MouseUpEvent, _window, cx| {
+                            this.copy_to_clipboard(table_name_for_copy.clone(), cx);
+                        }),
+                    )
+            });
+            div()
+                .max_h(px(LIST_SCROLL_MAX_HEIGHT))
+                .min_w(px(0.))
+                .overflow_y_scroll()
+                .restrict_scroll_to_axis()
+                .id("table_list_scroll")
+                .child(div().flex().flex_col().gap_1().children(items))
+                .into_any()
+        };
+
+        let column_list: AnyElement = if self.schema_browser.columns_loading {
+            div()
+                .text_sm()
+                .text_color(rgb(0x9ca3af))
+                .child("カラム情報を読み込み中...")
+                .into_any()
+        } else if self.schema_browser.selected_table.is_none() {
+            div()
+                .text_sm()
+                .text_color(rgb(0x9ca3af))
+                .child("テーブルを選択してください")
+                .into_any()
+        } else if self.schema_browser.columns.is_empty() {
+            div()
+                .text_sm()
+                .text_color(rgb(0x9ca3af))
+                .child("カラムが見つかりません")
+                .into_any()
+        } else {
+            let items = self.schema_browser.columns.iter().map(|column| {
+                let column_name = column.name.clone();
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .p_2()
+                    .rounded_md()
+                    .bg(rgb(0x0b1120))
+                    .border_1()
+                    .border_color(rgb(0x1f2937))
+                    .hover(|style| style.bg(rgb(0x1f2435)))
+                    .cursor_pointer()
+                    .child(div().text_sm().child(column.name.clone()))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0x93c5fd))
+                            .child(column.data_type.clone()),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(move |this, _: &MouseUpEvent, _window, cx| {
+                            this.copy_to_clipboard(column_name.clone(), cx);
+                        }),
+                    )
+            });
+            div()
+                .max_h(px(LIST_SCROLL_MAX_HEIGHT))
+                .min_w(px(0.))
+                .overflow_y_scroll()
+                .restrict_scroll_to_axis()
+                .id("column_list_scroll")
+                .child(div().flex().flex_col().gap_1().children(items))
+                .into_any()
+        };
+
+        let mut panel = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_4()
+            .rounded_lg()
+            .bg(rgb(0x111827))
+            .border_1()
+            .border_color(rgb(0x1f2937))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(0x9ca3af))
+                    .child("スキーマブラウザ"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(div().text_xs().text_color(rgb(0x93c5fd)).child("Schemas"))
+                            .child(schema_list),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(div().text_xs().text_color(rgb(0x93c5fd)).child("Tables"))
+                            .child(table_list),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .flex_grow()
+                            .child(div().text_xs().text_color(rgb(0x93c5fd)).child("Columns"))
+                            .child(column_list),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(0x6b7280))
+                    .child("右クリックでスキーマ/テーブル名をコピーできます。カラム名は左クリックでコピーします。"),
+            )
+            .child(self.render_preview_panel());
+
+        if let Some(error) = self.schema_browser.last_error.clone() {
+            panel = panel.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(0xf87171))
+                    .child(format!("メタデータ取得エラー: {error}")),
+            );
+        }
+
+        panel
+    }
+
+    fn render_preview_panel(&mut self) -> impl Element {
+        let header = if let (Some(schema), Some(table)) = (
+            self.schema_browser.selected_schema.as_ref(),
+            self.schema_browser.selected_table.as_ref(),
+        ) {
+            format!("{schema}.{table} のプレビュー (最大 {PREVIEW_LIMIT} 行)")
+        } else {
+            "テーブルプレビュー".into()
+        };
+
+        let content: AnyElement = if self.schema_browser.preview_loading {
+            div()
+                .text_sm()
+                .text_color(rgb(0x9ca3af))
+                .child("プレビューを読み込み中...")
+                .into_any()
+        } else if let Some(view) = self.schema_browser.preview.as_ref() {
+            div()
+                .max_h(px(260.))
+                .w_full()
+                .min_w(px(0.))
+                .overflow_scroll()
+                .restrict_scroll_to_axis()
+                .id("preview_table_scroll")
+                .child(self.render_result_table(view))
+                .into_any()
+        } else {
+            div()
+                .text_sm()
+                .text_color(rgb(0x9ca3af))
+                .child("テーブルを選択するとプレビューが表示されます")
+                .into_any()
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().text_sm().text_color(rgb(0x9ca3af)).child(header))
+            .child(content)
+    }
+
     fn render_editor_panel(&mut self, cx: &mut Context<Self>) -> impl Element {
         let mut panel = div()
             .flex()
@@ -737,30 +1240,6 @@ impl DbMiruApp {
     fn render_results_panel(&self) -> impl Element {
         let content = match &self.query_state.last_result {
             Some(result) => {
-                let header = div()
-                    .flex()
-                    .border_b_1()
-                    .border_color(rgb(0x1f2937))
-                    .children(result.columns.iter().map(|col| {
-                        div()
-                            .flex_grow()
-                            .text_sm()
-                            .text_color(rgb(0x93c5fd))
-                            .p_2()
-                            .child(col.clone())
-                    }));
-
-                let rows = result.rows.iter().map(|row| {
-                    div()
-                        .flex()
-                        .border_b_1()
-                        .border_color(rgb(0x1f2937))
-                        .children(
-                            row.iter()
-                                .map(|cell| div().flex_grow().p_2().text_sm().child(cell.clone())),
-                        )
-                });
-
                 let meta = if result.truncated {
                     format!(
                         "{} 行 ({} ms, 上位 {} 行を表示 / 最大 {ROW_LIMIT})",
@@ -781,7 +1260,16 @@ impl DbMiruApp {
                     .flex_col()
                     .gap_1()
                     .child(div().text_sm().text_color(rgb(0x9ca3af)).child(meta))
-                    .child(div().flex().flex_col().child(header).children(rows))
+                    .child(
+                        div()
+                            .max_h(px(320.))
+                            .w_full()
+                            .min_w(px(0.))
+                            .overflow_scroll()
+                            .restrict_scroll_to_axis()
+                            .id("result_table_scroll")
+                            .child(self.render_result_table(result)),
+                    )
             }
             None => {
                 div()
@@ -810,6 +1298,71 @@ impl DbMiruApp {
                     .child("結果 / エラー"),
             )
             .child(content)
+    }
+
+    fn render_result_table(&self, view: &QueryResultView) -> AnyElement {
+        let col_width = px(RESULT_COL_MIN_WIDTH);
+        let total_width =
+            px(RESULT_NUMBER_WIDTH + view.columns.len() as f32 * RESULT_COL_MIN_WIDTH);
+        let header = div()
+            .flex()
+            .flex_shrink_0()
+            .min_w(total_width)
+            .border_b_1()
+            .border_color(rgb(0x1f2937))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .w(px(RESULT_NUMBER_WIDTH))
+                    .text_xs()
+                    .text_color(rgb(0x93c5fd))
+                    .p_2()
+                    .child("#"),
+            )
+            .children(view.columns.iter().map(|col| {
+                div()
+                    .flex_shrink_0()
+                    .w(col_width)
+                    .text_sm()
+                    .text_color(rgb(0x93c5fd))
+                    .p_2()
+                    .child(col.clone())
+            }));
+
+        let rows = view.rows.iter().enumerate().map(|(idx, row)| {
+            div()
+                .flex()
+                .flex_shrink_0()
+                .min_w(total_width)
+                .border_b_1()
+                .border_color(rgb(0x1f2937))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .w(px(RESULT_NUMBER_WIDTH))
+                        .text_xs()
+                        .text_color(rgb(0x93c5fd))
+                        .p_2()
+                        .child(format!("#{}", idx + 1)),
+                )
+                .children(row.iter().map(|cell| {
+                    div()
+                        .flex_shrink_0()
+                        .w(col_width)
+                        .p_2()
+                        .text_sm()
+                        .child(cell.clone())
+                }))
+        });
+
+        div()
+            .flex()
+            .flex_col()
+            .flex_shrink_0()
+            .min_w(total_width)
+            .child(header)
+            .children(rows)
+            .into_any()
     }
 }
 
@@ -877,6 +1430,77 @@ impl From<QueryResult> for QueryResultView {
             duration: value.duration,
             truncated: value.truncated,
         }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MainTab {
+    SchemaBrowser,
+    SqlEditor,
+}
+
+impl Default for MainTab {
+    fn default() -> Self {
+        MainTab::SchemaBrowser
+    }
+}
+
+struct SchemaBrowserState {
+    schemas: Vec<String>,
+    schemas_loading: bool,
+    selected_schema: Option<String>,
+    tables: Vec<String>,
+    tables_loading: bool,
+    selected_table: Option<String>,
+    columns: Vec<ColumnMetadata>,
+    columns_loading: bool,
+    preview: Option<QueryResultView>,
+    preview_loading: bool,
+    last_error: Option<String>,
+}
+
+impl Default for SchemaBrowserState {
+    fn default() -> Self {
+        Self {
+            schemas: Vec::new(),
+            schemas_loading: false,
+            selected_schema: None,
+            tables: Vec::new(),
+            tables_loading: false,
+            selected_table: None,
+            columns: Vec::new(),
+            columns_loading: false,
+            preview: None,
+            preview_loading: false,
+            last_error: None,
+        }
+    }
+}
+
+impl SchemaBrowserState {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn start_schema_load(&mut self) {
+        self.schemas_loading = true;
+        self.tables_loading = false;
+        self.columns_loading = false;
+        self.preview_loading = false;
+        self.schemas.clear();
+        self.tables.clear();
+        self.columns.clear();
+        self.preview = None;
+        self.selected_schema = None;
+        self.selected_table = None;
+        self.last_error = None;
+    }
+
+    fn stop_loading(&mut self) {
+        self.schemas_loading = false;
+        self.tables_loading = false;
+        self.columns_loading = false;
+        self.preview_loading = false;
     }
 }
 

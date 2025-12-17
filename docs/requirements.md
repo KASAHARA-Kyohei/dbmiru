@@ -25,6 +25,7 @@
 - The UI must remain responsive during DB operations.
 - Errors must never crash the application.
 - Credentials must not be logged or stored in plaintext.
+- Secrets that are persisted must go through the OS keychain (or equivalent secure store).
 - Reasonable defaults: limit displayed rows for large queries.
 
 ## Out of scope (early)

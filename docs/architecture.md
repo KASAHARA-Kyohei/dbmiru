@@ -27,6 +27,18 @@ User action
 - Initial: PostgreSQL adapter using tokio-postgres
 - Future: trait-based adapters for multiple databases
 
+## Metadata + schema exploration (M2)
+
+- DB worker must expose async commands for schemas, tables, columns, and previews.
+- UI triggers these commands through `DbSessionHandle` (no direct Postgres calls in UI).
+- Metadata responses flow back as `DbEvent` variants and update the schema browser state.
+
+## Secret storage (M2)
+
+- Wrap OS keychain / credential manager behind a `SecretStore`.
+- Persist only encrypted/OS-managed secrets; `profiles.json` stores metadata (e.g., `remember_password`) but never raw passwords.
+- Missing/failed keychain operations should degrade gracefully (prompt user to re-enter password).
+
 ## Config directory
 
 - Use `directories::BaseDirs` to locate the OS-specific config root.

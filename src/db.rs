@@ -14,6 +14,7 @@ use crate::Result;
 use crate::profiles::ConnectionProfile;
 
 pub const ROW_LIMIT: usize = 1000;
+pub const PREVIEW_LIMIT: usize = 50;
 
 pub enum DbEvent {
     Connected(DbSessionHandle),
@@ -21,6 +22,22 @@ pub enum DbEvent {
     ConnectionClosed(Option<String>),
     QueryFinished(QueryResult),
     QueryFailed(String),
+    SchemasLoaded(Vec<String>),
+    TablesLoaded {
+        schema: String,
+        tables: Vec<String>,
+    },
+    ColumnsLoaded {
+        schema: String,
+        table: String,
+        columns: Vec<ColumnMetadata>,
+    },
+    TablePreviewReady {
+        schema: String,
+        table: String,
+        result: QueryResult,
+    },
+    MetadataFailed(String),
 }
 
 pub struct QueryResult {
@@ -29,6 +46,12 @@ pub struct QueryResult {
     pub row_count: usize,
     pub duration: Duration,
     pub truncated: bool,
+}
+
+#[derive(Clone)]
+pub struct ColumnMetadata {
+    pub name: String,
+    pub data_type: String,
 }
 
 pub struct DbSessionHandle {
@@ -51,6 +74,28 @@ impl DbSessionHandle {
         });
     }
 
+    pub fn load_schemas(&self) {
+        let _ = self.commands.send(DbCommand::FetchSchemas);
+    }
+
+    pub fn load_tables(&self, schema: String) {
+        let _ = self.commands.send(DbCommand::FetchTables { schema });
+    }
+
+    pub fn load_columns(&self, schema: String, table: String) {
+        let _ = self
+            .commands
+            .send(DbCommand::FetchColumns { schema, table });
+    }
+
+    pub fn preview_table(&self, schema: String, table: String, limit: usize) {
+        let _ = self.commands.send(DbCommand::PreviewTable {
+            schema,
+            table,
+            limit,
+        });
+    }
+
     pub fn disconnect(&self) {
         let _ = self.commands.send(DbCommand::Disconnect);
     }
@@ -66,7 +111,23 @@ impl Drop for DbSessionHandle {
 }
 
 enum DbCommand {
-    Execute { sql: String, limit: usize },
+    Execute {
+        sql: String,
+        limit: usize,
+    },
+    FetchSchemas,
+    FetchTables {
+        schema: String,
+    },
+    FetchColumns {
+        schema: String,
+        table: String,
+    },
+    PreviewTable {
+        schema: String,
+        table: String,
+        limit: usize,
+    },
     Disconnect,
 }
 
@@ -161,6 +222,22 @@ async fn process_commands(
             DbCommand::Execute { sql, limit } => {
                 execute_query(&mut client, sql, limit, event_tx.clone()).await;
             }
+            DbCommand::FetchSchemas => {
+                load_schemas(&mut client, event_tx.clone()).await;
+            }
+            DbCommand::FetchTables { schema } => {
+                load_tables(&mut client, schema, event_tx.clone()).await;
+            }
+            DbCommand::FetchColumns { schema, table } => {
+                load_columns(&mut client, schema, table, event_tx.clone()).await;
+            }
+            DbCommand::PreviewTable {
+                schema,
+                table,
+                limit,
+            } => {
+                preview_table(&mut client, schema, table, limit, event_tx.clone()).await;
+            }
             DbCommand::Disconnect => break,
         }
     }
@@ -186,6 +263,148 @@ async fn execute_query(client: &mut Client, sql: String, limit: usize, event_tx:
                 .await;
         }
     }
+}
+
+async fn load_schemas(client: &mut Client, event_tx: Sender<DbEvent>) {
+    const SQL: &str = "
+        select schema_name
+        from information_schema.schemata
+        where schema_name not in ('pg_catalog', 'pg_toast', 'information_schema')
+        order by schema_name
+    ";
+    match client.query(SQL, &[]).await {
+        Ok(rows) => {
+            let schemas = rows
+                .into_iter()
+                .filter_map(|row| row.try_get::<_, String>(0).ok())
+                .collect();
+            let _ = event_tx.send(DbEvent::SchemasLoaded(schemas)).await;
+        }
+        Err(err) => {
+            let _ = event_tx
+                .send(DbEvent::MetadataFailed(format!(
+                    "Failed to load schemas: {err}"
+                )))
+                .await;
+        }
+    }
+}
+
+async fn load_tables(client: &mut Client, schema: String, event_tx: Sender<DbEvent>) {
+    const SQL: &str = "
+        select table_name
+        from information_schema.tables
+        where table_schema = $1 and table_type = 'BASE TABLE'
+        order by table_name
+    ";
+    match client.query(SQL, &[&schema]).await {
+        Ok(rows) => {
+            let tables = rows
+                .into_iter()
+                .filter_map(|row| row.try_get::<_, String>(0).ok())
+                .collect();
+            let _ = event_tx
+                .send(DbEvent::TablesLoaded { schema, tables })
+                .await;
+        }
+        Err(err) => {
+            let _ = event_tx
+                .send(DbEvent::MetadataFailed(format!(
+                    "Failed to load tables: {err}"
+                )))
+                .await;
+        }
+    }
+}
+
+async fn load_columns(
+    client: &mut Client,
+    schema: String,
+    table: String,
+    event_tx: Sender<DbEvent>,
+) {
+    const SQL: &str = "
+        select column_name, data_type
+        from information_schema.columns
+        where table_schema = $1 and table_name = $2
+        order by ordinal_position
+    ";
+    match client.query(SQL, &[&schema, &table]).await {
+        Ok(rows) => {
+            let columns = rows
+                .into_iter()
+                .filter_map(|row| {
+                    let name = row.try_get::<_, String>(0).ok()?;
+                    let data_type = row.try_get::<_, String>(1).ok()?;
+                    Some(ColumnMetadata { name, data_type })
+                })
+                .collect();
+            let _ = event_tx
+                .send(DbEvent::ColumnsLoaded {
+                    schema,
+                    table,
+                    columns,
+                })
+                .await;
+        }
+        Err(err) => {
+            let _ = event_tx
+                .send(DbEvent::MetadataFailed(format!(
+                    "Failed to load columns: {err}"
+                )))
+                .await;
+        }
+    }
+}
+
+async fn preview_table(
+    client: &mut Client,
+    schema: String,
+    table: String,
+    limit: usize,
+    event_tx: Sender<DbEvent>,
+) {
+    let sql = format!(
+        "select * from {} limit {}",
+        qualified_table_name(&schema, &table),
+        limit
+    );
+    let started = Instant::now();
+    match client.query(sql.as_str(), &[]).await {
+        Ok(rows) => {
+            let (columns, data_rows) = convert_rows(&rows, limit);
+            let payload = QueryResult {
+                columns,
+                rows: data_rows,
+                row_count: rows.len(),
+                duration: started.elapsed(),
+                truncated: rows.len() == limit,
+            };
+            let _ = event_tx
+                .send(DbEvent::TablePreviewReady {
+                    schema,
+                    table,
+                    result: payload,
+                })
+                .await;
+        }
+        Err(err) => {
+            let _ = event_tx
+                .send(DbEvent::MetadataFailed(format!(
+                    "Failed to preview table: {err}"
+                )))
+                .await;
+        }
+    }
+}
+
+fn qualified_table_name(schema: &str, table: &str) -> String {
+    format!("{}.{}", quote_identifier(schema), quote_identifier(table))
+}
+
+fn quote_identifier(value: &str) -> String {
+    let escaped = value.replace('"', "\"\"");
+    format!("\"{escaped}\"")
 }
 
 fn convert_rows(rows: &[Row], limit: usize) -> (Vec<String>, Vec<Vec<String>>) {

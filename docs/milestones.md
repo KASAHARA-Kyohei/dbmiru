@@ -76,6 +76,20 @@ Let users browse basic metadata and preview tables.
 - [ ] Decide workspace split boundaries (app / core / db / storage) and document in `docs/architecture.md`
 - [ ] Design and implement secure password storage (OS keychain or master password)
 
+### DoD (Definition of Done)
+
+- A user can browse database metadata:
+  - schemas
+  - tables
+  - columns
+- A user can preview table data using a generated
+  `SELECT * FROM <table> LIMIT N` query.
+- Result tables remain usable when content overflows:
+  - horizontal scrolling appears when columns exceed panel width
+  - vertical scrolling works for large row counts
+- Sensitive information (passwords) is stored securely and never persisted in plaintext.
+- The app remains stable during metadata browsing (no panic, no UI freeze).
+
 ### Workspace evaluation criteria (write decision in docs)
 
 Convert to workspace if at least one is true:
