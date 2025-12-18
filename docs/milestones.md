@@ -73,7 +73,7 @@ Let users browse basic metadata and preview tables.
 - [x] List columns for selected table
 - [x] Table preview: `SELECT * FROM <table> LIMIT N`
 - [ ] Improve result table UX (copy cell/row basics if feasible)
-- [ ] Decide workspace split boundaries (app / core / db / storage) and document in `docs/architecture.md`
+- [x] Decide workspace split boundaries (app / core / db / storage) and document in `docs/architecture.md`
 
 ### DoD (Definition of Done)
 
@@ -107,11 +107,11 @@ Prepare for multiple databases by introducing an adapter layer and splitting cra
 
 ### Checklist
 
-- [ ] Define a `DbAdapter` trait (connect/execute/metadata)
-- [ ] Implement `PostgresAdapter`
-- [ ] Convert repo to Cargo workspace
-- [ ] Split crates: `app`, `core`, `db`, `storage`
-- [ ] Update docs to match new structure
+- [x] Define a `DbAdapter` trait (connect/execute/metadata)
+- [x] Implement `PostgresAdapter`
+- [x] Convert repo to Cargo workspace
+- [x] Split crates: `app`, `core`, `db`, `storage`
+- [x] Update docs to match new structure
 
 ### DoD
 

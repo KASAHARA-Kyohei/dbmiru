@@ -1,6 +1,5 @@
+use dbmiru_core::{Result, profiles::ProfileId};
 use keyring::Entry;
-
-use crate::{Result, profiles::ProfileId};
 
 pub struct SecretStore {
     service_name: String,

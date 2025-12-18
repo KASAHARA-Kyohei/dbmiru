@@ -1,21 +1,20 @@
-[package]
-name = "dbmiru"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["app", "core", "db", "storage"]
+resolver = "2"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0.93"
 async-channel = "2.3.1"
+async-trait = "0.1.83"
+chrono = { version = "0.4.38", features = ["serde"] }
 directories = "5.0.1"
 gpui = { version = "0.2.2", features = ["macos-blade"] }
-chrono = { version = "0.4.38", features = ["serde"] }
+keyring = "2.3.2"
 serde = { version = "1.0.215", features = ["derive"] }
 serde_json = "1.0.133"
-thiserror = "1.0.69"
 tokio = { version = "1.40.0", features = ["rt-multi-thread", "macros", "sync"] }
 tokio-postgres = { version = "0.7.12", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 unicode-segmentation = "1.11.0"
 uuid = { version = "1.10.0", features = ["serde", "v4"] }
-keyring = "2.3.2"
