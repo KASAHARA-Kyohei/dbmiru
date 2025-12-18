@@ -59,3 +59,23 @@ User action
 - Single crate until boundaries become clear (M0–M1)
 - M2: document boundaries and decision
 - M3: convert to workspace if DB abstraction is introduced
+
+## Workspace layout (M3)
+
+- `app` crate (`dbmiru-app` binary): gpui UI, window lifecycle, user interaction.
+- `db` crate (`dbmiru-db`): `DbAdapter` trait, async session runtime, Postgres adapter.
+- `core` crate (`dbmiru-core`): shared result alias + domain types (connection profiles, IDs).
+- `storage` crate (`dbmiru-storage`): persistence adapters (profile store, secret store).
+- Crates depend one-way: `app` → `db`/`storage`/`core`, `db`/`storage` → `core`.
+
+## Database adapters
+
+- `DbAdapter` trait abstracts connect / execute / metadata / preview / disconnect.
+- `PostgresAdapter` owns `tokio_postgres::Client`, converts rows to UI-friendly strings, and surfaces connection failures via `ConnectionError`.
+- The db crate spawns a worker thread with a single-thread tokio runtime; the adapter runs inside that runtime and emits `DbEvent`s back to the UI.
+- Connection workers monitor the underlying driver future and emit `ConnectionClosed(reason)` when the driver exits (cleanly or with errors).
+
+## Workspace decision (M2)
+
+- (Historical) During M2 we stayed on a single crate; UI/core/db changes still landed together, so splitting early would have slowed iteration.
+- Splitting was deferred until adapter abstractions solidified and we were ready to host multiple backends (now achieved in M3).

@@ -1,22 +1,26 @@
-mod db;
-mod profiles;
 mod widgets;
 
 use std::{borrow::Cow, fs, path::PathBuf, time::Duration};
 
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
-use db::{ColumnMetadata, DbEvent, DbSessionHandle, PREVIEW_LIMIT, QueryResult, ROW_LIMIT};
+use dbmiru_core::{
+    Result,
+    profiles::{ConnectionProfile, ProfileId},
+};
+use dbmiru_db::{
+    self as db, ColumnMetadata, DbEvent, DbSessionHandle, PREVIEW_LIMIT, PostgresAdapter,
+    QueryResult, ROW_LIMIT,
+};
+use dbmiru_storage::ProfileStore;
 use directories::BaseDirs;
 use gpui::{
     AnyElement, App, Application, Bounds, ClipboardItem, Context, Element, EventEmitter,
     IntoElement, KeyBinding, MouseButton, MouseUpEvent, Render, SharedString, Window, WindowBounds,
     WindowOptions, actions, div, prelude::*, px, rgb,
 };
-use profiles::{ConnectionProfile, ProfileId, ProfileStore};
 use widgets::TextInput;
 
-type Result<T> = anyhow::Result<T>;
 const LIST_SCROLL_MAX_HEIGHT: f32 = 190.;
 const RESULT_COL_MIN_WIDTH: f32 = 160.;
 const RESULT_NUMBER_WIDTH: f32 = 64.;
@@ -99,9 +103,9 @@ fn run() -> Result<()> {
 
 fn register_zed_fonts(cx: &mut App) {
     let fonts: Vec<Cow<'static, [u8]>> = vec![
-        Cow::Borrowed(include_bytes!("../assets/fonts/zed-mono-regular.ttf")),
-        Cow::Borrowed(include_bytes!("../assets/fonts/zed-mono-medium.ttf")),
-        Cow::Borrowed(include_bytes!("../assets/fonts/zed-mono-semibold.ttf")),
+        Cow::Borrowed(include_bytes!("../../assets/fonts/zed-mono-regular.ttf")),
+        Cow::Borrowed(include_bytes!("../../assets/fonts/zed-mono-medium.ttf")),
+        Cow::Borrowed(include_bytes!("../../assets/fonts/zed-mono-semibold.ttf")),
     ];
     if let Err(err) = cx.text_system().add_fonts(fonts) {
         tracing::warn!("Failed to register bundled fonts: {err:?}");
@@ -498,7 +502,8 @@ impl DbMiruApp {
         self.connecting_indicator = 1;
         self.connecting_indicator_frame = 0;
         self.connecting_indicator_active = false;
-        db::spawn_session(profile, password, self.event_tx.clone());
+        let adapter = PostgresAdapter::new(profile, password);
+        db::spawn_session(adapter, self.event_tx.clone());
         self.password_input.update(cx, |input, _| input.clear());
         cx.notify();
     }

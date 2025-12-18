@@ -1,0 +1,16 @@
+[package]
+name = "dbmiru-db"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+async-channel = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+dbmiru-core = { path = "../core" }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-postgres = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }

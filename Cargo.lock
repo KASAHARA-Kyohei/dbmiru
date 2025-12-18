@@ -1310,24 +1310,54 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
-name = "dbmiru"
+name = "dbmiru-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
- "chrono",
+ "dbmiru-core",
+ "dbmiru-db",
+ "dbmiru-storage",
  "directories",
  "gpui",
- "keyring",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-postgres",
  "tracing",
  "tracing-subscriber",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "dbmiru-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
  "uuid",
+]
+
+[[package]]
+name = "dbmiru-db"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel 2.5.0",
+ "async-trait",
+ "chrono",
+ "dbmiru-core",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "dbmiru-storage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dbmiru-core",
+ "keyring",
+ "serde_json",
 ]
 
 [[package]]
