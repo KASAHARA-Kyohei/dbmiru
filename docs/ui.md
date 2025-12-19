@@ -27,6 +27,7 @@
 - Show up to 5 entries (roughly 25% of window height) for schema/table/column lists; beyond that, scroll within the list
 - Right-click copies schema/table names; left-click copies column names
 - When a table is selected, show both the column list and a preview (`SELECT * ... LIMIT 50`) in the same tab
+- In preview tables, keep the column header visible while scrolling vertically (sticky header)
 - Metadata fetch errors appear at the bottom of the schema browser without crashing the UI
 
 ## SQL editor tab

@@ -71,7 +71,6 @@ impl ScrollCaptureExt for gpui::Div {
         self.on_scroll_wheel(|event: &ScrollWheelEvent, window, cx| {
             let delta = event.delta.pixel_delta(window.line_height());
             if delta.y.abs() >= delta.x.abs() {
-                window.prevent_default();
                 cx.stop_propagation();
             }
         })
@@ -324,10 +323,10 @@ impl DbMiruApp {
                 self.schema_browser.last_error = None;
                 if self.schema_browser.schemas.is_empty() {
                     self.schema_browser.selected_schema = None;
-                } else if self.schema_browser.selected_schema.is_none() {
-                    if let Some(first) = self.schema_browser.schemas.first().cloned() {
-                        self.select_schema(first, cx);
-                    }
+                } else if self.schema_browser.selected_schema.is_none()
+                    && let Some(first) = self.schema_browser.schemas.first().cloned()
+                {
+                    self.select_schema(first, cx);
                 }
             }
             DbEvent::TablesLoaded { schema, tables } => {
@@ -339,10 +338,10 @@ impl DbMiruApp {
                         self.schema_browser.selected_table = None;
                         self.schema_browser.columns.clear();
                         self.schema_browser.preview = None;
-                    } else if self.schema_browser.selected_table.is_none() {
-                        if let Some(first) = self.schema_browser.tables.first().cloned() {
-                            self.select_table(first, cx);
-                        }
+                    } else if self.schema_browser.selected_table.is_none()
+                        && let Some(first) = self.schema_browser.tables.first().cloned()
+                    {
+                        self.select_table(first, cx);
                     }
                 }
             }
@@ -576,7 +575,7 @@ impl DbMiruApp {
     }
 
     fn copy_to_clipboard(&mut self, value: String, cx: &mut Context<Self>) {
-        let _ = cx.write_to_clipboard(ClipboardItem::new_string(value));
+        cx.write_to_clipboard(ClipboardItem::new_string(value));
     }
 
     fn select_schema(&mut self, schema: String, cx: &mut Context<Self>) {
@@ -1387,17 +1386,19 @@ impl DbMiruApp {
                 .max_h(px(260.))
                 .w_full()
                 .min_w(px(0.))
-                .overflow_y_scroll()
                 .overflow_x_scroll()
                 .restrict_scroll_to_axis()
-                .absorb_vertical_scroll()
                 .id("preview_table_scroll")
                 .p_2()
                 .rounded_md()
                 .bg(rgb(COLOR_PANEL_MUTED))
                 .border_1()
                 .border_color(rgb(COLOR_BORDER))
-                .child(self.render_result_table(view, None))
+                .child(self.render_result_table(
+                    view,
+                    Some(px(210.)),
+                    Some("preview_table_body_scroll"),
+                ))
                 .into_any()
         } else {
             div()
@@ -1520,7 +1521,11 @@ impl DbMiruApp {
                             .overflow_x_scroll()
                             .restrict_scroll_to_axis()
                             .id("result_table_scroll")
-                            .child(self.render_result_table(result, Some(px(320.)))),
+                            .child(self.render_result_table(
+                                result,
+                                Some(px(320.)),
+                                Some("result_table_body_scroll"),
+                            )),
                     )
             }
             None => div().text_sm().text_color(rgb(COLOR_TEXT_MUTED)).child(
@@ -1553,6 +1558,7 @@ impl DbMiruApp {
         &self,
         view: &QueryResultView,
         max_body_height: Option<Pixels>,
+        body_scroll_id: Option<&'static str>,
     ) -> AnyElement {
         let col_width = px(RESULT_COL_MIN_WIDTH);
         let total_width =
@@ -1615,7 +1621,8 @@ impl DbMiruApp {
         let body = div().flex().flex_col().min_w(total_width).children(rows);
 
         let body: AnyElement = if let Some(max_height) = max_body_height {
-            div()
+            let body_scroll_id = body_scroll_id.unwrap_or("result_table_body_scroll");
+            let scroll = div()
                 .flex()
                 .flex_col()
                 .flex_shrink_0()
@@ -1624,9 +1631,10 @@ impl DbMiruApp {
                 .min_h(px(0.))
                 .overflow_y_scroll()
                 .restrict_scroll_to_axis()
-                .absorb_vertical_scroll()
-                .child(body)
-                .into_any()
+                .id(body_scroll_id)
+                .child(body);
+
+            div().absorb_vertical_scroll().child(scroll).into_any()
         } else {
             body.into_any()
         };
@@ -1757,18 +1765,14 @@ impl From<QueryResult> for QueryResultView {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum MainTab {
+    #[default]
     SchemaBrowser,
     SqlEditor,
 }
 
-impl Default for MainTab {
-    fn default() -> Self {
-        MainTab::SchemaBrowser
-    }
-}
-
+#[derive(Default)]
 struct SchemaBrowserState {
     schemas: Vec<String>,
     schemas_loading: bool,
@@ -1781,24 +1785,6 @@ struct SchemaBrowserState {
     preview: Option<QueryResultView>,
     preview_loading: bool,
     last_error: Option<String>,
-}
-
-impl Default for SchemaBrowserState {
-    fn default() -> Self {
-        Self {
-            schemas: Vec::new(),
-            schemas_loading: false,
-            selected_schema: None,
-            tables: Vec::new(),
-            tables_loading: false,
-            selected_table: None,
-            columns: Vec::new(),
-            columns_loading: false,
-            preview: None,
-            preview_loading: false,
-            last_error: None,
-        }
-    }
 }
 
 impl SchemaBrowserState {

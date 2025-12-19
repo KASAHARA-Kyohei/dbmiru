@@ -45,3 +45,8 @@ impl SecretStore {
         Ok(Entry::new(&self.service_name, &account)?)
     }
 }
+impl Default for SecretStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
