@@ -16,8 +16,8 @@ use dbmiru_storage::ProfileStore;
 use directories::BaseDirs;
 use gpui::{
     AnyElement, App, Application, Bounds, ClipboardItem, Context, Element, EventEmitter,
-    IntoElement, KeyBinding, MouseButton, MouseUpEvent, Render, SharedString, Window, WindowBounds,
-    WindowOptions, actions, div, prelude::*, px, rgb,
+    IntoElement, KeyBinding, MouseButton, MouseUpEvent, Pixels, Render, ScrollWheelEvent,
+    SharedString, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb,
 };
 use widgets::TextInput;
 
@@ -26,17 +26,28 @@ const RESULT_COL_MIN_WIDTH: f32 = 160.;
 const RESULT_NUMBER_WIDTH: f32 = 64.;
 const APP_FONT_FAMILY: &str = "Zed Mono";
 const CONNECTING_TICK_FRAMES: u8 = 18;
+const COLOR_CANVAS: u32 = 0x040715;
+const COLOR_PANEL: u32 = 0x0a0f1d;
+const COLOR_PANEL_MUTED: u32 = 0x11182a;
+const COLOR_PANEL_HIGHLIGHT: u32 = 0x1c2342;
+const COLOR_BORDER: u32 = 0x1f2a44;
+const COLOR_TEXT_MUTED: u32 = 0x94a3c4;
+const COLOR_ACCENT: u32 = 0x8b5cf6;
+const COLOR_ACCENT_SOFT: u32 = 0x7c3aed;
+const COLOR_SUCCESS: u32 = 0x10b981;
+const COLOR_DANGER: u32 = 0xf43f5e;
+const COLOR_DANGER_SOFT: u32 = 0xfda4af;
+const COLOR_DANGER_SURFACE: u32 = 0x3a1826;
 
 trait ScrollOverflowExt {
-    fn overflow_scroll(self) -> Self;
+    fn overflow_x_scroll(self) -> Self;
     fn overflow_y_scroll(self) -> Self;
     fn restrict_scroll_to_axis(self) -> Self;
 }
 
 impl ScrollOverflowExt for gpui::Div {
-    fn overflow_scroll(mut self) -> Self {
+    fn overflow_x_scroll(mut self) -> Self {
         self.style().overflow.x = Some(gpui::Overflow::Scroll);
-        self.style().overflow.y = Some(gpui::Overflow::Scroll);
         self
     }
 
@@ -48,6 +59,21 @@ impl ScrollOverflowExt for gpui::Div {
     fn restrict_scroll_to_axis(mut self) -> Self {
         self.style().restrict_scroll_to_axis = Some(true);
         self
+    }
+}
+
+trait ScrollCaptureExt {
+    fn absorb_vertical_scroll(self) -> Self;
+}
+
+impl ScrollCaptureExt for gpui::Div {
+    fn absorb_vertical_scroll(self) -> Self {
+        self.on_scroll_wheel(|event: &ScrollWheelEvent, window, cx| {
+            let delta = event.delta.pixel_delta(window.line_height());
+            if delta.y.abs() >= delta.x.abs() {
+                cx.stop_propagation();
+            }
+        })
     }
 }
 
@@ -297,10 +323,10 @@ impl DbMiruApp {
                 self.schema_browser.last_error = None;
                 if self.schema_browser.schemas.is_empty() {
                     self.schema_browser.selected_schema = None;
-                } else if self.schema_browser.selected_schema.is_none() {
-                    if let Some(first) = self.schema_browser.schemas.first().cloned() {
-                        self.select_schema(first, cx);
-                    }
+                } else if self.schema_browser.selected_schema.is_none()
+                    && let Some(first) = self.schema_browser.schemas.first().cloned()
+                {
+                    self.select_schema(first, cx);
                 }
             }
             DbEvent::TablesLoaded { schema, tables } => {
@@ -312,10 +338,10 @@ impl DbMiruApp {
                         self.schema_browser.selected_table = None;
                         self.schema_browser.columns.clear();
                         self.schema_browser.preview = None;
-                    } else if self.schema_browser.selected_table.is_none() {
-                        if let Some(first) = self.schema_browser.tables.first().cloned() {
-                            self.select_table(first, cx);
-                        }
+                    } else if self.schema_browser.selected_table.is_none()
+                        && let Some(first) = self.schema_browser.tables.first().cloned()
+                    {
+                        self.select_table(first, cx);
                     }
                 }
             }
@@ -549,7 +575,7 @@ impl DbMiruApp {
     }
 
     fn copy_to_clipboard(&mut self, value: String, cx: &mut Context<Self>) {
-        let _ = cx.write_to_clipboard(ClipboardItem::new_string(value));
+        cx.write_to_clipboard(ClipboardItem::new_string(value));
     }
 
     fn select_schema(&mut self, schema: String, cx: &mut Context<Self>) {
@@ -600,10 +626,12 @@ impl Render for DbMiruApp {
         }
         div()
             .flex()
+            .gap_6()
             .font_family(APP_FONT_FAMILY)
             .size_full()
-            .bg(rgb(0x0f172a))
-            .text_color(rgb(0xf8fafc))
+            .bg(rgb(COLOR_CANVAS))
+            .text_color(rgb(0xf4f5fb))
+            .p_6()
             .child(self.render_sidebar(cx))
             .child(self.render_workspace(cx))
     }
@@ -620,22 +648,31 @@ impl DbMiruApp {
             let item = div()
                 .flex()
                 .flex_col()
-                .gap_1()
+                .gap_2()
                 .p_3()
-                .rounded_md()
+                .rounded_lg()
                 .bg(if is_selected {
-                    rgb(0x1e293b)
+                    rgb(COLOR_PANEL_HIGHLIGHT)
                 } else {
-                    rgb(0x111827)
+                    rgb(COLOR_PANEL_MUTED)
                 })
                 .border_1()
-                .border_color(rgb(0x1f2937))
+                .border_color(if is_selected {
+                    rgb(COLOR_ACCENT)
+                } else {
+                    rgb(COLOR_BORDER)
+                })
                 .cursor_pointer()
-                .child(div().text_sm().text_color(rgb(0x93c5fd)).child(name))
-                .child(div().text_xs().text_color(rgb(0x9ca3af)).child(format!(
-                    "{}@{}:{}",
-                    profile.username, profile.host, profile.port
-                )))
+                .child(div().text_sm().text_color(rgb(0xf7f8fe)).child(name))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(COLOR_TEXT_MUTED))
+                        .child(format!(
+                            "{}@{}:{}",
+                            profile.username, profile.host, profile.port
+                        )),
+                )
                 .on_mouse_up(
                     MouseButton::Left,
                     cx.listener(move |this, _: &MouseUpEvent, _window, cx| {
@@ -652,9 +689,12 @@ impl DbMiruApp {
             .flex_col()
             .flex_shrink_0()
             .w(px(320.))
-            .p_4()
-            .gap_3()
-            .bg(rgb(0x0b1120))
+            .p_5()
+            .gap_4()
+            .bg(rgb(COLOR_PANEL))
+            .border_1()
+            .border_color(rgb(COLOR_BORDER))
+            .rounded_lg()
             .child(
                 div()
                     .flex()
@@ -663,7 +703,7 @@ impl DbMiruApp {
                     .child(
                         div()
                             .text_lg()
-                            .text_color(rgb(0x93c5fd))
+                            .text_color(rgb(0xfbfaff))
                             .child("Connection Profiles"),
                     )
                     .child(
@@ -671,8 +711,9 @@ impl DbMiruApp {
                             .text_sm()
                             .px_3()
                             .py_1()
-                            .rounded_md()
-                            .bg(rgb(0x2563eb))
+                            .rounded_full()
+                            .bg(rgb(COLOR_ACCENT))
+                            .hover(|style| style.bg(rgb(COLOR_ACCENT_SOFT)))
                             .cursor_pointer()
                             .child("New")
                             .on_mouse_up(
@@ -689,6 +730,12 @@ impl DbMiruApp {
                     .flex_col()
                     .gap_2()
                     .max_h(px(260.))
+                    .p_1()
+                    .rounded_lg()
+                    .bg(rgb(COLOR_PANEL_MUTED))
+                    .border_1()
+                    .border_color(rgb(COLOR_BORDER))
+                    .overflow_y_scroll()
                     .children(profile_items),
             )
             .child(form)
@@ -703,8 +750,10 @@ impl DbMiruApp {
                 div()
                     .px_3()
                     .py_2()
-                    .rounded_md()
-                    .bg(rgb(0x1d4ed8))
+                    .rounded_full()
+                    .bg(rgb(COLOR_PANEL_HIGHLIGHT))
+                    .border_1()
+                    .border_color(rgb(COLOR_ACCENT))
                     .text_sm()
                     .child("Edit")
                     .cursor_pointer()
@@ -719,9 +768,13 @@ impl DbMiruApp {
                 div()
                     .px_3()
                     .py_2()
-                    .rounded_md()
-                    .bg(rgb(0xb91c1c))
+                    .rounded_full()
+                    .bg(rgb(COLOR_DANGER_SURFACE))
+                    .border_1()
+                    .border_color(rgb(COLOR_DANGER))
                     .text_sm()
+                    .text_color(rgb(COLOR_DANGER_SOFT))
+                    .hover(|style| style.bg(rgb(0x4a2034)))
                     .child("Delete")
                     .cursor_pointer()
                     .on_mouse_up(
@@ -745,10 +798,15 @@ impl DbMiruApp {
             .flex()
             .flex_col()
             .gap_2()
+            .p_4()
+            .rounded_lg()
+            .bg(rgb(COLOR_PANEL_MUTED))
+            .border_1()
+            .border_color(rgb(COLOR_BORDER))
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0x93c5fd))
+                    .text_color(rgb(COLOR_TEXT_MUTED))
                     .child("Profile Details"),
             )
             .child(self.profile_form.name.clone())
@@ -764,8 +822,9 @@ impl DbMiruApp {
                         div()
                             .px_3()
                             .py_2()
-                            .bg(rgb(0x22c55e))
-                            .rounded_md()
+                            .bg(rgb(COLOR_ACCENT))
+                            .hover(|style| style.bg(rgb(COLOR_ACCENT_SOFT)))
+                            .rounded_full()
                             .text_sm()
                             .child("Save")
                             .cursor_pointer()
@@ -780,8 +839,8 @@ impl DbMiruApp {
                         div()
                             .px_3()
                             .py_2()
-                            .bg(rgb(0x374151))
-                            .rounded_md()
+                            .bg(rgb(COLOR_PANEL_HIGHLIGHT))
+                            .rounded_full()
                             .text_sm()
                             .child("Cancel")
                             .cursor_pointer()
@@ -810,8 +869,8 @@ impl DbMiruApp {
             .h_full()
             .overflow_y_scroll()
             .id("workspace_scroll")
-            .p_4()
-            .gap_4()
+            .p_5()
+            .gap_5()
             .child(self.render_connection_panel(cx))
             .child(self.render_main_tabs(cx))
     }
@@ -824,7 +883,8 @@ impl DbMiruApp {
         };
         let status_text = self.connection.status_text(dot_count);
         let error = self.connection.last_error.clone();
-        let button_label = if self.connection.is_connected() {
+        let is_connected = self.connection.is_connected();
+        let button_label = if is_connected {
             "Disconnect"
         } else {
             "Connect"
@@ -837,17 +897,22 @@ impl DbMiruApp {
             .gap_3()
             .p_4()
             .rounded_lg()
-            .bg(rgb(0x111827))
+            .bg(rgb(COLOR_PANEL_MUTED))
             .border_1()
-            .border_color(rgb(0x1f2937))
+            .border_color(rgb(COLOR_BORDER))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_1()
                     .flex_grow()
-                    .child(div().text_sm().text_color(rgb(0x9ca3af)).child("Status"))
-                    .child(div().text_lg().child(status_text)),
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(COLOR_TEXT_MUTED))
+                            .child("Status"),
+                    )
+                    .child(div().text_xl().child(status_text)),
             )
             .child(
                 div()
@@ -855,7 +920,12 @@ impl DbMiruApp {
                     .flex_col()
                     .gap_1()
                     .w(px(220.))
-                    .child(div().text_sm().text_color(rgb(0x9ca3af)).child("Password"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(COLOR_TEXT_MUTED))
+                            .child("Password"),
+                    )
                     .child(self.password_input.clone()),
             )
             .child(
@@ -869,11 +939,28 @@ impl DbMiruApp {
                     .px_4()
                     .rounded_lg()
                     .text_sm()
-                    .text_color(rgb(0xf8fafc))
-                    .bg(if self.connection.is_connected() {
-                        rgb(0xef4444)
+                    .text_color(if is_connected {
+                        rgb(COLOR_DANGER_SOFT)
                     } else {
-                        rgb(0x22c55e)
+                        rgb(0xf8fafc)
+                    })
+                    .bg(if is_connected {
+                        rgb(COLOR_DANGER_SURFACE)
+                    } else {
+                        rgb(COLOR_ACCENT)
+                    })
+                    .border_1()
+                    .border_color(if is_connected {
+                        rgb(COLOR_DANGER)
+                    } else {
+                        rgb(COLOR_ACCENT_SOFT)
+                    })
+                    .hover(|style| {
+                        if is_connected {
+                            style.bg(rgb(0x4a2034))
+                        } else {
+                            style.bg(rgb(COLOR_ACCENT_SOFT))
+                        }
                     })
                     .cursor_pointer()
                     .child(
@@ -916,12 +1003,30 @@ impl DbMiruApp {
                 div()
                     .px_3()
                     .py_2()
-                    .rounded_md()
+                    .rounded_full()
                     .text_sm()
-                    .bg(if is_active {
-                        rgb(0x2563eb)
+                    .text_color(if is_active {
+                        rgb(0xfdf4ff)
                     } else {
-                        rgb(0x1f2937)
+                        rgb(COLOR_TEXT_MUTED)
+                    })
+                    .bg(if is_active {
+                        rgb(COLOR_ACCENT)
+                    } else {
+                        rgb(COLOR_PANEL_MUTED)
+                    })
+                    .border_1()
+                    .border_color(if is_active {
+                        rgb(COLOR_ACCENT_SOFT)
+                    } else {
+                        rgb(COLOR_BORDER)
+                    })
+                    .hover(|style| {
+                        if is_active {
+                            style.bg(rgb(0x9f67ff))
+                        } else {
+                            style.bg(rgb(COLOR_PANEL_HIGHLIGHT))
+                        }
                     })
                     .cursor_pointer()
                     .child(label)
@@ -950,6 +1055,11 @@ impl DbMiruApp {
             .flex()
             .flex_col()
             .gap_3()
+            .p_4()
+            .rounded_lg()
+            .bg(rgb(COLOR_PANEL))
+            .border_1()
+            .border_color(rgb(COLOR_BORDER))
             .child(div().flex().gap_2().children(tab_buttons))
             .child(content)
     }
@@ -958,7 +1068,7 @@ impl DbMiruApp {
         let schema_list: AnyElement = if self.schema_browser.schemas_loading {
             div()
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(rgb(COLOR_TEXT_MUTED))
                 .child("Loading schemas...")
                 .into_any()
         } else if self.schema_browser.schemas.is_empty() {
@@ -969,7 +1079,7 @@ impl DbMiruApp {
             };
             div()
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(rgb(COLOR_TEXT_MUTED))
                 .child(message)
                 .into_any()
         } else {
@@ -989,15 +1099,24 @@ impl DbMiruApp {
                     .p_2()
                     .rounded_md()
                     .bg(if is_selected {
-                        rgb(0x1e293b)
+                        rgb(COLOR_PANEL_HIGHLIGHT)
                     } else {
-                        rgb(0x0b1120)
+                        rgb(COLOR_PANEL_MUTED)
                     })
                     .border_1()
-                    .border_color(rgb(0x1f2937))
-                    .hover(|style| style.bg(rgb(0x1f2435)))
+                    .border_color(if is_selected {
+                        rgb(COLOR_ACCENT)
+                    } else {
+                        rgb(COLOR_BORDER)
+                    })
+                    .hover(|style| style.bg(rgb(COLOR_PANEL_HIGHLIGHT)))
                     .cursor_pointer()
-                    .child(div().text_sm().child(schema.clone()))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0xfdf4ff))
+                            .child(schema.clone()),
+                    )
                     .on_mouse_up(
                         MouseButton::Left,
                         cx.listener(move |this, _: &MouseUpEvent, _window, cx| {
@@ -1011,32 +1130,37 @@ impl DbMiruApp {
                         }),
                     )
             });
-            div()
+            let scroll = div()
                 .max_h(px(LIST_SCROLL_MAX_HEIGHT))
                 .min_w(px(0.))
                 .overflow_y_scroll()
                 .restrict_scroll_to_axis()
                 .id("schema_list_scroll")
-                .child(div().flex().flex_col().gap_1().children(items))
-                .into_any()
+                .p_1()
+                .rounded_md()
+                .bg(rgb(COLOR_PANEL_MUTED))
+                .border_1()
+                .border_color(rgb(COLOR_BORDER))
+                .child(div().flex().flex_col().gap_1().children(items));
+            div().absorb_vertical_scroll().child(scroll).into_any()
         };
 
         let table_list: AnyElement = if self.schema_browser.tables_loading {
             div()
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(rgb(COLOR_TEXT_MUTED))
                 .child("Loading tables...")
                 .into_any()
         } else if self.schema_browser.selected_schema.is_none() {
             div()
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(rgb(COLOR_TEXT_MUTED))
                 .child("Select a schema")
                 .into_any()
         } else if self.schema_browser.tables.is_empty() {
             div()
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(rgb(COLOR_TEXT_MUTED))
                 .child("No tables found")
                 .into_any()
         } else {
@@ -1056,15 +1180,24 @@ impl DbMiruApp {
                     .p_2()
                     .rounded_md()
                     .bg(if is_selected {
-                        rgb(0x1e293b)
+                        rgb(COLOR_PANEL_HIGHLIGHT)
                     } else {
-                        rgb(0x0b1120)
+                        rgb(COLOR_PANEL_MUTED)
                     })
                     .border_1()
-                    .border_color(rgb(0x1f2937))
-                    .hover(|style| style.bg(rgb(0x1f2435)))
+                    .border_color(if is_selected {
+                        rgb(COLOR_ACCENT)
+                    } else {
+                        rgb(COLOR_BORDER)
+                    })
+                    .hover(|style| style.bg(rgb(COLOR_PANEL_HIGHLIGHT)))
                     .cursor_pointer()
-                    .child(div().text_sm().child(table.clone()))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0xfdf4ff))
+                            .child(table.clone()),
+                    )
                     .on_mouse_up(
                         MouseButton::Left,
                         cx.listener(move |this, _: &MouseUpEvent, _window, cx| {
@@ -1078,32 +1211,37 @@ impl DbMiruApp {
                         }),
                     )
             });
-            div()
+            let scroll = div()
                 .max_h(px(LIST_SCROLL_MAX_HEIGHT))
                 .min_w(px(0.))
                 .overflow_y_scroll()
                 .restrict_scroll_to_axis()
                 .id("table_list_scroll")
-                .child(div().flex().flex_col().gap_1().children(items))
-                .into_any()
+                .p_1()
+                .rounded_md()
+                .bg(rgb(COLOR_PANEL_MUTED))
+                .border_1()
+                .border_color(rgb(COLOR_BORDER))
+                .child(div().flex().flex_col().gap_1().children(items));
+            div().absorb_vertical_scroll().child(scroll).into_any()
         };
 
         let column_list: AnyElement = if self.schema_browser.columns_loading {
             div()
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(rgb(COLOR_TEXT_MUTED))
                 .child("Loading columns...")
                 .into_any()
         } else if self.schema_browser.selected_table.is_none() {
             div()
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(rgb(COLOR_TEXT_MUTED))
                 .child("Select a table")
                 .into_any()
         } else if self.schema_browser.columns.is_empty() {
             div()
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(rgb(COLOR_TEXT_MUTED))
                 .child("No columns found")
                 .into_any()
         } else {
@@ -1115,16 +1253,21 @@ impl DbMiruApp {
                     .items_center()
                     .p_2()
                     .rounded_md()
-                    .bg(rgb(0x0b1120))
+                    .bg(rgb(COLOR_PANEL_MUTED))
                     .border_1()
-                    .border_color(rgb(0x1f2937))
-                    .hover(|style| style.bg(rgb(0x1f2435)))
+                    .border_color(rgb(COLOR_BORDER))
+                    .hover(|style| style.bg(rgb(COLOR_PANEL_HIGHLIGHT)))
                     .cursor_pointer()
-                    .child(div().text_sm().child(column.name.clone()))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0xfdf4ff))
+                            .child(column.name.clone()),
+                    )
                     .child(
                         div()
                             .text_xs()
-                            .text_color(rgb(0x93c5fd))
+                            .text_color(rgb(COLOR_TEXT_MUTED))
                             .child(column.data_type.clone()),
                     )
                     .on_mouse_up(
@@ -1134,14 +1277,19 @@ impl DbMiruApp {
                         }),
                     )
             });
-            div()
+            let scroll = div()
                 .max_h(px(LIST_SCROLL_MAX_HEIGHT))
                 .min_w(px(0.))
                 .overflow_y_scroll()
                 .restrict_scroll_to_axis()
                 .id("column_list_scroll")
-                .child(div().flex().flex_col().gap_1().children(items))
-                .into_any()
+                .p_1()
+                .rounded_md()
+                .bg(rgb(COLOR_PANEL_MUTED))
+                .border_1()
+                .border_color(rgb(COLOR_BORDER))
+                .child(div().flex().flex_col().gap_1().children(items));
+            div().absorb_vertical_scroll().child(scroll).into_any()
         };
 
         let mut panel =
@@ -1151,13 +1299,13 @@ impl DbMiruApp {
                 .gap_2()
                 .p_4()
                 .rounded_lg()
-                .bg(rgb(0x111827))
+                .bg(rgb(COLOR_PANEL))
                 .border_1()
-                .border_color(rgb(0x1f2937))
+                .border_color(rgb(COLOR_BORDER))
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(0x9ca3af))
+                        .text_color(rgb(COLOR_TEXT_MUTED))
                         .child("Schema Browser"),
                 )
                 .child(
@@ -1169,7 +1317,12 @@ impl DbMiruApp {
                                 .flex()
                                 .flex_col()
                                 .gap_1()
-                                .child(div().text_xs().text_color(rgb(0x93c5fd)).child("Schemas"))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(COLOR_TEXT_MUTED))
+                                        .child("Schemas"),
+                                )
                                 .child(schema_list),
                         )
                         .child(
@@ -1177,7 +1330,12 @@ impl DbMiruApp {
                                 .flex()
                                 .flex_col()
                                 .gap_1()
-                                .child(div().text_xs().text_color(rgb(0x93c5fd)).child("Tables"))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(COLOR_TEXT_MUTED))
+                                        .child("Tables"),
+                                )
                                 .child(table_list),
                         )
                         .child(
@@ -1186,11 +1344,16 @@ impl DbMiruApp {
                                 .flex_col()
                                 .gap_1()
                                 .flex_grow()
-                                .child(div().text_xs().text_color(rgb(0x93c5fd)).child("Columns"))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(COLOR_TEXT_MUTED))
+                                        .child("Columns"),
+                                )
                                 .child(column_list),
                         ),
                 )
-                .child(div().text_xs().text_color(rgb(0x6b7280)).child(
+                .child(div().text_xs().text_color(rgb(COLOR_TEXT_MUTED)).child(
                     "Right-click to copy schema/table names. Left-click copies column names.",
                 ))
                 .child(self.render_preview_panel());
@@ -1215,7 +1378,7 @@ impl DbMiruApp {
         let content: AnyElement = if self.schema_browser.preview_loading {
             div()
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(rgb(COLOR_TEXT_MUTED))
                 .child("Loading preview...")
                 .into_any()
         } else if let Some(view) = self.schema_browser.preview.as_ref() {
@@ -1223,15 +1386,24 @@ impl DbMiruApp {
                 .max_h(px(260.))
                 .w_full()
                 .min_w(px(0.))
-                .overflow_scroll()
+                .overflow_x_scroll()
                 .restrict_scroll_to_axis()
                 .id("preview_table_scroll")
-                .child(self.render_result_table(view))
+                .p_2()
+                .rounded_md()
+                .bg(rgb(COLOR_PANEL_MUTED))
+                .border_1()
+                .border_color(rgb(COLOR_BORDER))
+                .child(self.render_result_table(
+                    view,
+                    Some(px(210.)),
+                    Some("preview_table_body_scroll"),
+                ))
                 .into_any()
         } else {
             div()
                 .text_sm()
-                .text_color(rgb(0x9ca3af))
+                .text_color(rgb(COLOR_TEXT_MUTED))
                 .child("Select a table to see its preview")
                 .into_any()
         };
@@ -1240,7 +1412,17 @@ impl DbMiruApp {
             .flex()
             .flex_col()
             .gap_2()
-            .child(div().text_sm().text_color(rgb(0x9ca3af)).child(header))
+            .p_3()
+            .rounded_lg()
+            .bg(rgb(COLOR_PANEL_MUTED))
+            .border_1()
+            .border_color(rgb(COLOR_BORDER))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(COLOR_TEXT_MUTED))
+                    .child(header),
+            )
             .child(content)
     }
 
@@ -1251,23 +1433,23 @@ impl DbMiruApp {
             .gap_2()
             .p_4()
             .rounded_lg()
-            .bg(rgb(0x111827))
+            .bg(rgb(COLOR_PANEL))
             .border_1()
-            .border_color(rgb(0x1f2937))
+            .border_color(rgb(COLOR_BORDER))
             .key_context("SqlEditor")
             .on_action(cx.listener(|this, _: &RunQuery, _, cx| this.execute_query(cx)))
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0x9ca3af))
+                    .text_color(rgb(COLOR_TEXT_MUTED))
                     .child("SQL Editor"),
             )
             .child(
                 div()
                     .border_1()
-                    .border_color(rgb(0x1f2937))
+                    .border_color(rgb(COLOR_BORDER))
                     .rounded_md()
-                    .bg(rgb(0x0b1120))
+                    .bg(rgb(COLOR_PANEL_MUTED))
                     .child(self.sql_input.clone()),
             )
             .child(
@@ -1278,8 +1460,9 @@ impl DbMiruApp {
                         div()
                             .px_4()
                             .py_2()
-                            .bg(rgb(0x2563eb))
-                            .rounded_md()
+                            .bg(rgb(COLOR_ACCENT))
+                            .hover(|style| style.bg(rgb(COLOR_ACCENT_SOFT)))
+                            .rounded_full()
                             .text_sm()
                             .child("Run (Cmd/Ctrl + Enter)")
                             .cursor_pointer()
@@ -1325,27 +1508,32 @@ impl DbMiruApp {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(div().text_sm().text_color(rgb(0x9ca3af)).child(meta))
                     .child(
                         div()
-                            .max_h(px(320.))
+                            .text_sm()
+                            .text_color(rgb(COLOR_TEXT_MUTED))
+                            .child(meta),
+                    )
+                    .child(
+                        div()
                             .w_full()
                             .min_w(px(0.))
-                            .overflow_scroll()
+                            .overflow_x_scroll()
                             .restrict_scroll_to_axis()
                             .id("result_table_scroll")
-                            .child(self.render_result_table(result)),
+                            .child(self.render_result_table(
+                                result,
+                                Some(px(320.)),
+                                Some("result_table_body_scroll"),
+                            )),
                     )
             }
-            None => {
-                div()
-                    .text_sm()
-                    .text_color(rgb(0x9ca3af))
-                    .child(match self.query_state.status {
-                        QueryStatus::Running => "Query is running...",
-                        QueryStatus::Idle => "Results will appear here.",
-                    })
-            }
+            None => div().text_sm().text_color(rgb(COLOR_TEXT_MUTED)).child(
+                match self.query_state.status {
+                    QueryStatus::Running => "Query is running...",
+                    QueryStatus::Idle => "Results will appear here.",
+                },
+            ),
         };
 
         div()
@@ -1354,19 +1542,24 @@ impl DbMiruApp {
             .gap_2()
             .p_4()
             .rounded_lg()
-            .bg(rgb(0x111827))
+            .bg(rgb(COLOR_PANEL))
             .border_1()
-            .border_color(rgb(0x1f2937))
+            .border_color(rgb(COLOR_BORDER))
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0x9ca3af))
+                    .text_color(rgb(COLOR_TEXT_MUTED))
                     .child("Results / Errors"),
             )
             .child(content)
     }
 
-    fn render_result_table(&self, view: &QueryResultView) -> AnyElement {
+    fn render_result_table(
+        &self,
+        view: &QueryResultView,
+        max_body_height: Option<Pixels>,
+        body_scroll_id: Option<&'static str>,
+    ) -> AnyElement {
         let col_width = px(RESULT_COL_MIN_WIDTH);
         let total_width =
             px(RESULT_NUMBER_WIDTH + view.columns.len() as f32 * RESULT_COL_MIN_WIDTH);
@@ -1375,13 +1568,14 @@ impl DbMiruApp {
             .flex_shrink_0()
             .min_w(total_width)
             .border_b_1()
-            .border_color(rgb(0x1f2937))
+            .border_color(rgb(COLOR_BORDER))
+            .bg(rgb(COLOR_PANEL_HIGHLIGHT))
             .child(
                 div()
                     .flex_shrink_0()
                     .w(px(RESULT_NUMBER_WIDTH))
                     .text_xs()
-                    .text_color(rgb(0x93c5fd))
+                    .text_color(rgb(0xfdf4ff))
                     .p_2()
                     .child("#"),
             )
@@ -1390,7 +1584,7 @@ impl DbMiruApp {
                     .flex_shrink_0()
                     .w(col_width)
                     .text_sm()
-                    .text_color(rgb(0x93c5fd))
+                    .text_color(rgb(0xfdf4ff))
                     .p_2()
                     .child(col.clone())
             }));
@@ -1401,13 +1595,15 @@ impl DbMiruApp {
                 .flex_shrink_0()
                 .min_w(total_width)
                 .border_b_1()
-                .border_color(rgb(0x1f2937))
+                .border_color(rgb(COLOR_BORDER))
+                .bg(rgb(COLOR_PANEL_MUTED))
+                .hover(|style| style.bg(rgb(COLOR_PANEL_HIGHLIGHT)))
                 .child(
                     div()
                         .flex_shrink_0()
                         .w(px(RESULT_NUMBER_WIDTH))
                         .text_xs()
-                        .text_color(rgb(0x93c5fd))
+                        .text_color(rgb(COLOR_TEXT_MUTED))
                         .p_2()
                         .child(format!("#{}", idx + 1)),
                 )
@@ -1417,9 +1613,31 @@ impl DbMiruApp {
                         .w(col_width)
                         .p_2()
                         .text_sm()
+                        .text_color(rgb(0xf7f8ff))
                         .child(cell.clone())
                 }))
         });
+
+        let body = div().flex().flex_col().min_w(total_width).children(rows);
+
+        let body: AnyElement = if let Some(max_height) = max_body_height {
+            let body_scroll_id = body_scroll_id.unwrap_or("result_table_body_scroll");
+            let scroll = div()
+                .flex()
+                .flex_col()
+                .flex_shrink_0()
+                .min_w(total_width)
+                .max_h(max_height)
+                .min_h(px(0.))
+                .overflow_y_scroll()
+                .restrict_scroll_to_axis()
+                .id(body_scroll_id)
+                .child(body);
+
+            div().absorb_vertical_scroll().child(scroll).into_any()
+        } else {
+            body.into_any()
+        };
 
         div()
             .flex()
@@ -1427,16 +1645,16 @@ impl DbMiruApp {
             .flex_shrink_0()
             .min_w(total_width)
             .child(header)
-            .children(rows)
+            .child(body)
             .into_any()
     }
 }
 
 fn connection_action_icon(status: &ConnectionStatus) -> gpui::Div {
     let (color, size) = match status {
-        ConnectionStatus::Connected(_) => (rgb(0x22c55e), px(10.)),
+        ConnectionStatus::Connected(_) => (rgb(COLOR_SUCCESS), px(10.)),
         ConnectionStatus::Connecting(_) => (rgb(0xfbbf24), px(10.)),
-        ConnectionStatus::Disconnected => (rgb(0xf87171), px(8.)),
+        ConnectionStatus::Disconnected => (rgb(COLOR_DANGER), px(8.)),
     };
 
     div().w(size).h(size).rounded_full().bg(color)
@@ -1450,9 +1668,9 @@ fn error_banner(message: &str) -> gpui::Div {
         .gap_2()
         .p_3()
         .rounded_md()
-        .bg(rgb(0x2f1b1b))
+        .bg(rgb(COLOR_PANEL_HIGHLIGHT))
         .border_1()
-        .border_color(rgb(0x7f1d1d))
+        .border_color(rgb(COLOR_DANGER))
         .child(
             div()
                 .flex()
@@ -1461,15 +1679,17 @@ fn error_banner(message: &str) -> gpui::Div {
                 .w(px(20.))
                 .h(px(20.))
                 .rounded_full()
-                .bg(rgb(0xb91c1c))
+                .bg(rgb(COLOR_DANGER_SURFACE))
+                .border_1()
+                .border_color(rgb(COLOR_DANGER))
                 .text_xs()
-                .text_color(rgb(0xfef2f2))
+                .text_color(rgb(COLOR_DANGER_SOFT))
                 .child("!"),
         )
         .child(
             div()
                 .text_sm()
-                .text_color(rgb(0xfef2f2))
+                .text_color(rgb(COLOR_DANGER_SOFT))
                 .child(message_text),
         )
 }
@@ -1545,18 +1765,14 @@ impl From<QueryResult> for QueryResultView {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum MainTab {
+    #[default]
     SchemaBrowser,
     SqlEditor,
 }
 
-impl Default for MainTab {
-    fn default() -> Self {
-        MainTab::SchemaBrowser
-    }
-}
-
+#[derive(Default)]
 struct SchemaBrowserState {
     schemas: Vec<String>,
     schemas_loading: bool,
@@ -1569,24 +1785,6 @@ struct SchemaBrowserState {
     preview: Option<QueryResultView>,
     preview_loading: bool,
     last_error: Option<String>,
-}
-
-impl Default for SchemaBrowserState {
-    fn default() -> Self {
-        Self {
-            schemas: Vec::new(),
-            schemas_loading: false,
-            selected_schema: None,
-            tables: Vec::new(),
-            tables_loading: false,
-            selected_table: None,
-            columns: Vec::new(),
-            columns_loading: false,
-            preview: None,
-            preview_loading: false,
-            last_error: None,
-        }
-    }
 }
 
 impl SchemaBrowserState {

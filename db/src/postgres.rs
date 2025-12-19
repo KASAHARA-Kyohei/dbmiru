@@ -1,7 +1,7 @@
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::Instant,
 };
@@ -283,14 +283,14 @@ fn classify_connection_error(err: &tokio_postgres::Error) -> ConnectionError {
 
     if let Some(db_err) = err.as_db_error() {
         let detail = err.to_string();
-        match db_err.code() {
-            &SqlState::INVALID_PASSWORD => {
+        match *db_err.code() {
+            SqlState::INVALID_PASSWORD => {
                 return ConnectionError::new("Password authentication failed.", detail);
             }
-            &SqlState::INVALID_AUTHORIZATION_SPECIFICATION => {
+            SqlState::INVALID_AUTHORIZATION_SPECIFICATION => {
                 return ConnectionError::new("User does not exist or lacks permission.", detail);
             }
-            &SqlState::INVALID_CATALOG_NAME => {
+            SqlState::INVALID_CATALOG_NAME => {
                 return ConnectionError::new("Database does not exist.", detail);
             }
             _ => {}
