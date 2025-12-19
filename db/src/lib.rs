@@ -7,10 +7,10 @@ use std::{
     thread,
 };
 
-use async_channel::Sender;
 use anyhow::Error;
+use async_channel::Sender;
 use dbmiru_core::Result;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 pub use postgres::PostgresAdapter;
 

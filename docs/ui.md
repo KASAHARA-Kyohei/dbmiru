@@ -14,6 +14,13 @@
 - Results appear in the SQL tab result panel
 - Errors appear inline (connection panel / editor panel / schema browser)
 
+## Visual style (M3)
+
+- Canvas background: deep navy (`#040715`) with generous padding; panels float as frosted cards (`#0a0f1d` / `#11182a`) with subtle borders.
+- Accent color: violet (`#8B5CF6` → hover `#7C3AED`) for primary actions (New/Run/Connect) and tab focus.
+- Text: base `#F4F5FB`, muted labels `#94A3C4`; table headers use the highlight surface and bright text for contrast.
+- Buttons are pill-shaped with hover transitions; destructive actions reuse the coral danger color to stay consistent across the app.
+
 ## Schema browser (M2)
 
 - After a successful connection, automatically fetch the schema list and auto-select the first schema/table pair
