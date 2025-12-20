@@ -10,6 +10,7 @@
 ## Interactions (MVP)
 
 - Select a connection profile → connect
+- Reorder connection profiles with per-item Up/Down controls (manual order, persisted)
 - Write SQL → execute
 - Results appear in the SQL tab result panel
 - Errors appear inline (connection panel / editor panel / schema browser)

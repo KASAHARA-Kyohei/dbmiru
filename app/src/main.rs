@@ -499,6 +499,36 @@ impl DbMiruApp {
         }
     }
 
+    fn profile_index(&self, profile_id: ProfileId) -> Option<usize> {
+        self.profiles
+            .iter()
+            .position(|profile| profile.id == profile_id)
+    }
+
+    fn move_profile_by(&mut self, profile_id: ProfileId, delta: isize, cx: &mut Context<Self>) {
+        let Some(current_index) = self.profile_index(profile_id) else {
+            return;
+        };
+        let target_index = match delta {
+            -1 => current_index.checked_sub(1),
+            1 if current_index + 1 < self.profiles.len() => Some(current_index + 1),
+            _ => None,
+        };
+        let Some(target_index) = target_index else {
+            return;
+        };
+
+        self.profiles.swap(current_index, target_index);
+        if let Err(err) = self.profile_store.save(&self.profiles) {
+            self.profiles.swap(current_index, target_index);
+            self.profile_notice = Some(format!("Failed to save: {err}"));
+        } else {
+            self.profile_notice = None;
+            self.selected_profile = Some(profile_id);
+        }
+        cx.notify();
+    }
+
     fn select_profile(&mut self, profile_id: ProfileId, cx: &mut Context<Self>) {
         self.selected_profile = Some(profile_id);
         self.profile_form_mode = ProfileFormMode::Hidden;
@@ -640,11 +670,83 @@ impl Render for DbMiruApp {
 impl DbMiruApp {
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl Element {
         let selected = self.selected_profile;
+        let total_profiles = self.profiles.len();
         let mut profile_items = Vec::new();
-        for profile in self.profiles.clone() {
+        for (index, profile) in self.profiles.iter().cloned().enumerate() {
             let is_selected = selected == Some(profile.id);
             let profile_id = profile.id;
             let name = profile.name.clone();
+            let can_move_up = index > 0;
+            let can_move_down = index + 1 < total_profiles;
+
+            let reorder_controls = if is_selected {
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .gap_1()
+                    .flex_shrink_0()
+                    .child({
+                        let mut node = div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(20.))
+                            .h(px(18.))
+                            .rounded_md()
+                            .bg(rgb(COLOR_PANEL_HIGHLIGHT))
+                            .border_1()
+                            .border_color(rgb(COLOR_BORDER))
+                            .text_xs()
+                            .child("↑");
+                        if can_move_up {
+                            node = node
+                                .cursor_pointer()
+                                .hover(|style| style.bg(rgb(COLOR_PANEL_MUTED)))
+                                .on_mouse_up(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _: &MouseUpEvent, _window, cx| {
+                                        cx.stop_propagation();
+                                        this.move_profile_by(profile_id, -1, cx)
+                                    }),
+                                );
+                        } else {
+                            node = node.text_color(rgb(COLOR_TEXT_MUTED));
+                        }
+                        node
+                    })
+                    .child({
+                        let mut node = div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(20.))
+                            .h(px(18.))
+                            .rounded_md()
+                            .bg(rgb(COLOR_PANEL_HIGHLIGHT))
+                            .border_1()
+                            .border_color(rgb(COLOR_BORDER))
+                            .text_xs()
+                            .child("↓");
+                        if can_move_down {
+                            node = node
+                                .cursor_pointer()
+                                .hover(|style| style.bg(rgb(COLOR_PANEL_MUTED)))
+                                .on_mouse_up(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _: &MouseUpEvent, _window, cx| {
+                                        cx.stop_propagation();
+                                        this.move_profile_by(profile_id, 1, cx)
+                                    }),
+                                );
+                        } else {
+                            node = node.text_color(rgb(COLOR_TEXT_MUTED));
+                        }
+                        node
+                    })
+            } else {
+                div()
+            };
             let item = div()
                 .flex()
                 .flex_col()
@@ -663,7 +765,15 @@ impl DbMiruApp {
                     rgb(COLOR_BORDER)
                 })
                 .cursor_pointer()
-                .child(div().text_sm().text_color(rgb(0xf7f8fe)).child(name))
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .items_start()
+                        .gap_2()
+                        .child(div().text_sm().text_color(rgb(0xf7f8fe)).child(name))
+                        .child(reorder_controls),
+                )
                 .child(
                     div()
                         .text_xs()
